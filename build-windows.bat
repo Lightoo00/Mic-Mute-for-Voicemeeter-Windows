@@ -8,13 +8,13 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-py -m PyInstaller --noconfirm --clean --onefile --windowed --name "Mic Mute for Voicemeeter & Windows" main.py
+py -m PyInstaller --noconfirm --clean --onefile --windowed --icon "assets\mic-mute.ico" --add-data "assets\mic-mute.ico;assets" --name "Mic Mute for Voicemeeter & Windows" main.py
 if errorlevel 1 (
   echo Main application build failed.
   pause
   exit /b 1
 )
-py -m PyInstaller --noconfirm --clean --onefile --windowed --name MicMuteUpdater updater.py
+py -m PyInstaller --noconfirm --clean --onefile --windowed --icon "assets\mic-mute.ico" --name MicMuteUpdater updater.py
 if errorlevel 1 (
   echo Updater build failed.
   pause
@@ -23,7 +23,7 @@ if errorlevel 1 (
 mkdir release 2>nul
 copy /Y "dist\Mic Mute for Voicemeeter & Windows.exe" "release\Mic Mute for Voicemeeter & Windows.exe"
 copy /Y "dist\MicMuteUpdater.exe" "release\MicMuteUpdater.exe"
-powershell -NoProfile -Command "Compress-Archive -Path 'release\*' -DestinationPath 'Mic-Mute-Windows-v6.1.0.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'release\*' -DestinationPath 'Mic-Mute-Windows-v6.1.1.zip' -Force"
 echo.
-echo Build complete: Mic-Mute-Windows-v6.1.0.zip
+echo Build complete: Mic-Mute-Windows-v6.1.1.zip
 pause

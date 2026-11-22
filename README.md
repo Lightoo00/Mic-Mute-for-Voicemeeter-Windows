@@ -1,6 +1,6 @@
 # Mic Mute for Voicemeeter & Windows
 
-Version: 6.1.0  
+Version: 6.1.1  
 Repository: https://github.com/Lightoo00/Mic-Mute-for-Voicemeeter-Windows
 
 This project is based on the supplied complete MicHUD v6.0 source. The original HUD,
@@ -24,3 +24,9 @@ packaged EXE when the matching `MicMuteUpdater.exe` is beside the main EXE.
 ## Settings compatibility
 The existing `%APPDATA%\MicHUD.json` settings file is intentionally preserved so
 existing user preferences remain available.
+
+
+## Version 6.1.1
+- Refreshed microphone HUD artwork.
+- Added a custom microphone application icon to the Windows EXE.
+- Preserved the existing HUD layouts, waveform styles, settings, and hotkeys.

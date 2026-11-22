@@ -43,10 +43,17 @@ except ImportError:
 # الإعدادات
 # ---------------------------------------------------------------------------
 APP_NAME = "Mic Mute for Voicemeeter & Windows"
-APP_VERSION = "6.1.0"
+APP_VERSION = "6.1.1"
 GITHUB_REPO = "Lightoo00/Mic-Mute-for-Voicemeeter-Windows"
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CONFIG_PATH = os.path.join(os.environ.get("APPDATA", "."), "MicHUD.json")
+
+
+def resource_path(relative_path):
+    """Resolve bundled assets in development and PyInstaller one-file builds."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative_path)
+
 DEFAULTS = {
     "hotkey": "t",
     "mode": "voicemeeter",
@@ -399,6 +406,10 @@ class MicHUD:
 
         self.root = tk.Tk()
         self.root.title(APP_NAME)
+        try:
+            self.root.iconbitmap(resource_path(os.path.join("assets", "mic-mute.ico")))
+        except (tk.TclError, OSError):
+            pass
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", bool(self.cfg["topmost"]))
         self.root.attributes("-alpha", float(self.cfg["opacity"]))
@@ -959,51 +970,70 @@ class MicHUD:
                         self._glow_dot(canvas, x, y - 3, r, glow, accent, layers=2)
 
     def _draw_mic(self, c, x, y, radius, accent, muted=False, level=0.0):
-        pulse = 1.0 + 0.08 * math.sin(self.phase * 2)
-        r = radius * pulse
-        
-        c.create_oval(x-r-3, y-r-3, x+r+3, y+r+3,
-                      fill=blend_color(self.colors["background"], accent, 0.1),
-                      outline="")
-        
+        """Modern studio microphone icon with a reactive audio halo."""
+        pulse = 1.0 + (0.035 * math.sin(self.phase * 2) if not muted else 0)
+        r = max(8, radius * pulse)
+        bg = self.colors["background"]
+        shell = "#101d2c"
+        metal = "#d9e8f5"
+
+        c.create_oval(x-r-4, y-r-4, x+r+4, y+r+4,
+                      fill=blend_color(bg, accent, 0.16), outline="")
         c.create_oval(x-r, y-r, x+r, y+r,
-                      fill="#1b2938", outline="#34485d", width=1.5)
-        
-        c.create_oval(x-r+2, y-r+2, x+r-2, y+r-2,
-                      outline="#2c4053", width=1)
-        
+                      fill=shell, outline=blend_color(accent, "#ffffff", 0.22), width=1.2)
+
         if not muted:
-            extent = -max(3, min(330, int(level * 330)))
-            c.create_arc(x-r-1, y-r-1, x+r+1, y+r+1,
-                         start=90, extent=extent,
-                         style=tk.ARC, outline=accent, width=2.5)
+            extent = max(8, min(300, int(300 * max(0.05, level))))
             c.create_arc(x-r-2, y-r-2, x+r+2, y+r+2,
-                         start=90, extent=extent,
-                         style=tk.ARC, outline=blend_color(accent, "#ffffff", 0.3),
-                         width=1)
+                         start=270, extent=extent, style=tk.ARC,
+                         outline=accent, width=max(1, r*0.075))
         else:
-            c.create_arc(x-r-1, y-r-1, x+r+1, y+r+1,
-                         start=35, extent=290, style=tk.ARC, outline=accent, width=2)
-        
-        c.create_oval(x-4, y-9, x+4, y+4, fill=accent, outline="")
-        c.create_oval(x-5, y-10, x+5, y+5,
-                      outline=blend_color(accent, "#ffffff", 0.4), width=0.8)
-        
-        c.create_arc(x-9, y-2, x+9, y+11, start=180, extent=180,
-                     style=tk.ARC, outline=accent, width=2)
-        
-        c.create_line(x, y+10, x, y+13, fill=accent, width=1.8)
-        
-        c.create_line(x-5, y+13, x+5, y+13, fill=accent, width=2)
-        
-        if level > 0.3:
-            for i in range(3):
-                angle = -90 + i * 30 - 30
-                rad = math.radians(angle)
-                dx = (r + 4) * math.cos(rad)
-                dy = (r + 4) * math.sin(rad)
-                c.create_oval(x+dx-1, y+dy-1, x+dx+1, y+dy+1,
-                              fill=blend_color(accent, "#ffffff", 0.5), outline="")
+            c.create_arc(x-r-2, y-r-2, x+r+2, y+r+2,
+                         start=35, extent=290, style=tk.ARC,
+                         outline=RED, width=max(1, r*0.075))
+
+        cap_w, cap_top = r*0.72, y-r*0.67
+        cap_bottom = y+r*0.40
+        c.create_oval(x-cap_w/2, cap_top, x+cap_w/2, cap_top+cap_w*0.55,
+                      fill="#e8f2fb", outline="")
+        c.create_rectangle(x-cap_w/2, cap_top+cap_w*0.27,
+                           x+cap_w/2, cap_bottom-cap_w*0.18,
+                           fill="#c8d8e8", outline="")
+        c.create_arc(x-cap_w/2, cap_bottom-cap_w*0.55,
+                     x+cap_w/2, cap_bottom+cap_w*0.12,
+                     start=180, extent=180, style=tk.ARC,
+                     outline="#e8f2fb", width=max(1, r*0.10))
+
+        for i in range(4):
+            yy = cap_top + cap_w*0.40 + i*cap_w*0.19
+            c.create_line(x-cap_w*0.25, yy, x+cap_w*0.25, yy,
+                          fill="#526a82", width=max(1, r*0.035))
+        c.create_line(x-cap_w*0.24, cap_top+cap_w*0.30,
+                      x-cap_w*0.24, cap_bottom-cap_w*0.22,
+                      fill="#ffffff", width=max(1, r*0.035))
+
+        mount_top, mount_bottom = y+r*0.12, y+r*0.72
+        c.create_arc(x-r*0.58, mount_top, x+r*0.58, mount_bottom,
+                     start=180, extent=180, style=tk.ARC,
+                     outline=accent if not muted else RED,
+                     width=max(1.4, r*0.10))
+        c.create_line(x, mount_bottom-r*0.03, x, y+r*0.88,
+                      fill=metal, width=max(1, r*0.075))
+        c.create_line(x-r*0.25, y+r*0.90, x+r*0.25, y+r*0.90,
+                      fill=metal, width=max(1.4, r*0.09))
+
+        if muted:
+            c.create_line(x-r*0.55, y-r*0.55, x+r*0.55, y+r*0.55,
+                          fill=RED, width=max(2, r*0.15), capstyle=tk.ROUND)
+        elif level > 0.18:
+            for side in (-1, 1):
+                for n in range(2):
+                    yy = y-r*0.10+n*r*0.22
+                    xx = x+side*r*(0.67+n*0.08)
+                    c.create_arc(xx-r*0.22, yy-r*0.22, xx+r*0.22, yy+r*0.22,
+                                 start=side*90-45, extent=90,
+                                 style=tk.ARC, outline=accent,
+                                 width=max(1, r*0.055))
 
     def draw(self):
         c = self.canvas
