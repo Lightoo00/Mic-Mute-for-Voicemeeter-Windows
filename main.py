@@ -45,7 +45,7 @@ except ImportError:
 # الإعدادات
 # ---------------------------------------------------------------------------
 APP_NAME = "Mic Mute for Voicemeeter & Windows"
-APP_VERSION = "6.2.0"
+APP_VERSION = "6.2.1"
 GITHUB_REPO = "Lightoo00/Mic-Mute-for-Voicemeeter-Windows"
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CONFIG_PATH = os.path.join(os.environ.get("APPDATA", "."), "MicHUD.json")
@@ -63,6 +63,8 @@ DEFAULTS = {
     "device_id": "",
     "opacity": 0.95,
     "topmost": True,
+    "update_check": True,
+    "last_update_check": 0,
     "wave_style": 0,
     "hud_shape": 0,
     "hud_size": "medium",
@@ -671,6 +673,7 @@ class MicHUD:
         self.menu.add_command(label="Exit", command=self.quit)
 
         self.register_hotkey()
+        self.root.after(4000, self._auto_update_check)
         self.sync_state()
         self.animate()
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
@@ -683,67 +686,104 @@ class MicHUD:
         with urllib.request.urlopen(request, timeout=12) as response:
             return json.loads(response.read().decode("utf-8"))
 
-    def check_for_updates(self):
-        """Check GitHub Releases without blocking the HUD."""
+    def _latest_release_update(self):
+        """Return (version, release, zip_asset); version is None when already current."""
+        release = self._fetch_latest_release()
+        latest = str(release.get("tag_name", "")).lstrip("vV")
+        try:
+            current = tuple(int(x) for x in APP_VERSION.split(".")[:3])
+            remote = tuple(int(x) for x in latest.split(".")[:3])
+        except ValueError:
+            return None, release, None
+        current = (current + (0, 0, 0))[:3]
+        remote = (remote + (0, 0, 0))[:3]
+        if remote <= current:
+            return None, release, None
+        asset = next((a for a in release.get("assets", [])
+                      if a.get("name", "").lower().endswith(".zip")), None)
+        return latest, release, asset
+
+    def check_for_updates(self, silent=False):
+        """Look for a newer release without blocking the HUD, then offer to install."""
         def worker():
             try:
-                release = self._fetch_latest_release()
-                latest = str(release.get("tag_name", "")).lstrip("vV")
-                current_parts = tuple(int(x) for x in APP_VERSION.split("."))
-                latest_parts = tuple(int(x) for x in latest.split(".")[:3])
-                latest_parts = (latest_parts + (0, 0, 0))[:3]
-                current_parts = (current_parts + (0, 0, 0))[:3]
-                if latest_parts <= current_parts:
-                    self.root.after(0, lambda: messagebox.showinfo(
-                        APP_NAME, f"You are using the latest version ({APP_VERSION})."
-                    ))
-                    return
-                assets = release.get("assets", [])
-                asset = next((a for a in assets if a.get("name", "").lower().endswith(".zip")), None)
-                if not asset:
-                    self.root.after(0, lambda: messagebox.showwarning(
-                        APP_NAME, "A new version is available, but its ZIP update package was not found."
-                    ))
-                    return
-                self.root.after(0, lambda: self._offer_update(release, asset))
+                latest, release, asset = self._latest_release_update()
             except Exception as exc:
-                self.root.after(0, lambda err=str(exc): messagebox.showerror(
-                    APP_NAME, "Could not check for updates. Check your internet connection and GitHub repository.\\n\\n" + err
-                ))
+                if not silent:
+                    self.root.after(0, lambda e=str(exc): messagebox.showerror(
+                        APP_NAME,
+                        "Could not check for updates. Check your internet connection and "
+                        "the GitHub repository." + "\n\n" + e))
+                return
+            if latest is None:
+                if not silent:
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        APP_NAME, f"You are using the latest version ({APP_VERSION})."))
+                return
+            if asset is None:
+                if not silent:
+                    self.root.after(0, lambda: messagebox.showwarning(
+                        APP_NAME,
+                        "A new version is available, but its ZIP update package was not found."))
+                return
+            if not getattr(sys, "frozen", False):
+                if not silent:
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        APP_NAME,
+                        "Automatic replacement works in the installed EXE. "
+                        "You are currently running the Python source."))
+                return
+            self.root.after(0, lambda: self._offer_update(release, asset))
         threading.Thread(target=worker, daemon=True).start()
 
     def _offer_update(self, release, asset):
         version = str(release.get("tag_name", "new version"))
         notes = str(release.get("body", "")).strip()
-        if not messagebox.askyesno(
-            APP_NAME,
-            f"Version {version} is available.\\nCurrent version: {APP_VERSION}\\n\\n"
-            + (notes[:1200] + "\\n\\n" if notes else "")
-            + "Download and install it now? The app will restart."
-        ):
-            return
+        message = ("Version " + version + " is available." + "\n"
+                   + "Current version: " + APP_VERSION + "\n\n"
+                   + (notes[:1000] + "\n\n" if notes else "")
+                   + "Install it now? The app will restart automatically.")
         try:
-            if getattr(sys, "frozen", False):
-                app_path = sys.executable
-            else:
-                messagebox.showinfo(
-                    APP_NAME,
-                    "Automatic replacement works in the installed EXE. You are currently running the Python source."
-                )
-                return
+            self.root.attributes("-topmost", True)
+            self.root.lift()
+        except tk.TclError:
+            pass
+        if not messagebox.askyesno(APP_NAME, message, parent=self.root):
+            return
+        self._install_update(asset)
+
+    def _install_update(self, asset):
+        try:
+            app_path = sys.executable
             helper = os.path.join(os.path.dirname(app_path), "MicMuteUpdater.exe")
             if not os.path.isfile(helper):
                 messagebox.showerror(
                     APP_NAME,
-                    "The updater helper is missing. Install the complete release package, including MicMuteUpdater.exe."
-                )
+                    "The updater helper is missing. Install the complete release package, "
+                    "including MicMuteUpdater.exe.")
                 return
-            subprocess.Popen([
-                helper, app_path, asset["browser_download_url"], APP_NAME
-            ], close_fds=True)
+            subprocess.Popen([helper, app_path, asset["browser_download_url"], APP_NAME],
+                             close_fds=True)
             self.quit()
         except Exception as exc:
-            messagebox.showerror(APP_NAME, f"Could not start the updater:\\n{exc}")
+            messagebox.showerror(APP_NAME, "Could not start the updater:" + "\n" + str(exc))
+
+    def _auto_update_check(self):
+        """Quiet background check on launch (at most once every 6 hours)."""
+        if not self.cfg.get("update_check", True):
+            return
+        if not getattr(sys, "frozen", False):
+            return
+        now = time.time()
+        try:
+            last = float(self.cfg.get("last_update_check", 0) or 0)
+        except (TypeError, ValueError):
+            last = 0.0
+        if now - last < 6 * 3600:
+            return
+        self.cfg["last_update_check"] = now
+        save_config(self.cfg)
+        self.check_for_updates(silent=True)
 
     def register_hotkey(self):
         try:
@@ -1703,6 +1743,12 @@ class MicHUD:
                         style="S.TCheckbutton").grid(row=r, column=0, columnspan=2,
                                                      sticky="w", pady=(6, 2))
 
+        upd = tk.BooleanVar(value=self.cfg.get("update_check", True))
+        r = nxt()
+        ttk.Checkbutton(left, text="Install updates automatically on launch", variable=upd,
+                        style="S.TCheckbutton").grid(row=r, column=0, columnspan=2,
+                                                     sticky="w", pady=(2, 2))
+
         section("02 · LOOK")
         shape_names = [item[0] for item in HUD_SHAPES]
         shape_var = tk.StringVar(value=shape_names[self.hud_shape])
@@ -1871,6 +1917,7 @@ class MicHUD:
             except (ValueError, TypeError):
                 return
             self.cfg["topmost"] = bool(top.get())
+            self.cfg["update_check"] = bool(upd.get())
             self.cfg["wave_style"] = (WAVE_NAMES.index(wave_var.get())
                                       if wave_var.get() in WAVE_NAMES else 0)
             self.cfg["hud_shape"] = (shape_names.index(shape_var.get())
