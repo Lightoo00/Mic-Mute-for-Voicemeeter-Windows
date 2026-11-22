@@ -1,4 +1,5 @@
 keyboard>=0.13.5
 pycaw>=20230407
+pillow>=10.0.0
 comtypes>=1.2.0
 pyinstaller>=6.0

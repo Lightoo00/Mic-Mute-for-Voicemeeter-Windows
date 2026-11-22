@@ -1,9 +1,9 @@
 """
-Mic Mute for Voicemeeter & Windows v6.1.0
-MicHUD v6.0 - واجهة عائمة احترافية متطورة
+Mic Mute for Voicemeeter & Windows v6.2.0
+MicHUD v6.2 - واجهة عائمة احترافية متطورة
 ✅ يدعم Voicemeeter Banana + كل مايكات Windows
-✅ 20 موجة جديدة مبتكرة + أيقونة مايك محسّنة
-✅ معاينة حية + تأثيرات بصرية متقدمة
+✅ 10 أشكال HUD + 20 موجة + 8 باليتات
+✅ أيقونة مايك جديدة + معاينة حية داخل الإعدادات
 """
 import ctypes
 import json
@@ -20,6 +20,8 @@ import tempfile
 import zipfile
 import tkinter as tk
 from tkinter import ttk, colorchooser, messagebox
+
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 try:
     import winreg
@@ -43,7 +45,7 @@ except ImportError:
 # الإعدادات
 # ---------------------------------------------------------------------------
 APP_NAME = "Mic Mute for Voicemeeter & Windows"
-APP_VERSION = "6.1.1"
+APP_VERSION = "6.2.0"
 GITHUB_REPO = "Lightoo00/Mic-Mute-for-Voicemeeter-Windows"
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CONFIG_PATH = os.path.join(os.environ.get("APPDATA", "."), "MicHUD.json")
@@ -85,19 +87,20 @@ WAVE_NAMES = [
 ]
 
 HUD_SHAPES = [
-    ("01 · Capsule", (248, 56)),
-    ("02 · Studio Rack", (316, 70)),
-    ("03 · Micro Strip", (190, 42)),
-    ("04 · Vertical Totem", (80, 160)),
-    ("05 · Audio Orb", (100, 100)),
-    ("06 · Split Modules", (286, 64)),
-    ("07 · Glass Rail", (328, 48)),
-    ("08 · Radar Dial", (124, 124)),
-    ("09 · Minimal Line", (264, 38)),
-    ("10 · Console Stack", (236, 84)),
+    ("01 · Capsule", (318, 66)),
+    ("02 · Studio Rack", (352, 84)),
+    ("03 · Micro Strip", (232, 54)),
+    ("04 · Vertical Totem", (104, 196)),
+    ("05 · Audio Orb", (132, 132)),
+    ("06 · Split Modules", (312, 74)),
+    ("07 · Glass Rail", (348, 58)),
+    ("08 · Radar Dial", (146, 146)),
+    ("09 · Minimal Line", (286, 46)),
+    ("10 · Console Stack", (272, 96)),
 ]
 
 SIZE_FACTORS = {"small": 0.82, "medium": 1.0, "large": 1.25}
+SS_FACTOR = 3
 SIZE_LABELS = {"Small · 82%": "small", "Medium · 100%": "medium", "Large · 125%": "large"}
 
 PALETTES = {
@@ -357,6 +360,237 @@ def blend_color(c1, c2, t):
 def noise(x, seed=0):
     return (math.sin(x * 12.9898 + seed * 78.233) * 43758.5453) % 1.0
 
+def _rr_pts(x1, y1, x2, y2, r, steps=8):
+    """Flat point list for a true rounded rectangle (straight edges, round corners)."""
+    r = max(0.0, min(r, abs(x2 - x1) / 2, abs(y2 - y1) / 2))
+    pts = []
+    corners = (
+        (x2 - r, y1 + r, -90), (x2 - r, y2 - r, 0),
+        (x1 + r, y2 - r, 90), (x1 + r, y1 + r, 180),
+    )
+    for cx, cy, a0 in corners:
+        for i in range(steps + 1):
+            a = math.radians(a0 + 90.0 * i / steps)
+            pts.extend((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
+
+
+
+# ---------------------------------------------------------------------------
+# Antialiased drawing surface (Pillow, supersampled)
+# ---------------------------------------------------------------------------
+FONT_FILES = {
+    "Segoe UI": r"C:\Windows\Fonts\segoeui.ttf",
+    "Segoe UI Semibold": r"C:\Windows\Fonts\seguisb.ttf",
+    "Segoe UI Bold": r"C:\Windows\Fonts\segoeuib.ttf",
+    "Consolas": r"C:\Windows\Fonts\consola.ttf",
+}
+_FONT_CACHE = {}
+_TK_ANCHORS = {"w": "lm", "e": "rm", "center": "mm", "n": "ma", "s": "md",
+               "nw": "la", "ne": "ra", "sw": "ld", "se": "rd"}
+
+
+def _pil_font(family, size, ss):
+    key = (family, size, ss)
+    if key in _FONT_CACHE:
+        return _FONT_CACHE[key]
+    path = FONT_FILES.get(family, FONT_FILES["Segoe UI"])
+    try:
+        font = ImageFont.truetype(path, max(5, int(round(size * ss))))
+    except Exception:
+        font = ImageFont.load_default()
+    _FONT_CACHE[key] = font
+    return font
+
+
+class ImgPainter:
+    """Same API as a Tk canvas, but rasterised with Pillow at SS× and downsampled.
+
+    Every shape therefore gets real antialiasing instead of Tk's staircase edges.
+    """
+
+    def __init__(self, host, width, height, ss=3, bg="#010101", offset=(0.0, 0.0)):
+        self.host = host
+        self.ss = max(1, int(ss))
+        self.w = max(1, int(round(width)))
+        self.h = max(1, int(round(height)))
+        self.bg = bg
+        self.ox, self.oy = offset
+        self.base_draw = None
+        self._photo = None
+        self.delete()
+
+    # -- infrastructure ---------------------------------------------------
+    def delete(self, *_tags):
+        self._img = Image.new("RGB", (self.w * self.ss, self.h * self.ss), self.bg)
+        self._d = ImageDraw.Draw(self._img)
+        if self.base_draw is not None:
+            self.base_draw(self)
+
+    @staticmethod
+    def _flat(args):
+        if len(args) == 1 and hasattr(args[0], "__len__"):
+            return list(args[0])
+        return list(args)
+
+    def _pts(self, args):
+        s, ox, oy = self.ss, self.ox, self.oy
+        flat = self._flat(args)
+        return [((flat[i] + ox) * s, (flat[i + 1] + oy) * s)
+                for i in range(0, len(flat) - 1, 2)]
+
+    def _c(self, color):
+        return color if color else None
+
+    # -- primitives -------------------------------------------------------
+    def create_polygon(self, *args, **kw):
+        pts = self._pts(args)
+        if len(pts) < 3:
+            return None
+        fill = self._c(kw.get("fill"))
+        outline = self._c(kw.get("outline"))
+        width = max(1, int(round(float(kw.get("width", 1)) * self.ss)))
+        self._d.polygon(pts, fill=fill, outline=outline, width=width if outline else 0)
+        return None
+
+    def create_line(self, *args, **kw):
+        pts = self._pts(args)
+        if len(pts) < 2:
+            return None
+        color = self._c(kw.get("fill"))
+        if color is None:
+            return None
+        width = max(1, int(round(float(kw.get("width", 1)) * self.ss)))
+        dash = kw.get("dash")
+        if dash:
+            self._dashed(pts, color, width, dash)
+        else:
+            self._d.line(pts, fill=color, width=width, joint="curve")
+        if kw.get("capstyle") == tk.ROUND and not dash:
+            r = width / 2.0
+            for px, py in (pts[0], pts[-1]):
+                self._d.ellipse([px - r, py - r, px + r, py + r], fill=color)
+        return None
+
+    def _dashed(self, pts, color, width, dash):
+        on = max(1.0, float(dash[0]) * self.ss)
+        off = max(1.0, float(dash[1]) * self.ss)
+        if len(dash) > 2:
+            off = max(1.0, float(dash[2]) * self.ss)
+        pos = 0.0
+        drawing = True
+        for i in range(len(pts) - 1):
+            x1, y1 = pts[i]
+            x2, y2 = pts[i + 1]
+            seg = math.hypot(x2 - x1, y2 - y1)
+            if seg < 1e-6:
+                continue
+            t = 0.0
+            while t < seg:
+                step = (on if drawing else off) - pos
+                step = min(step, seg - t)
+                if drawing:
+                    ax = x1 + (x2 - x1) * t / seg
+                    ay = y1 + (y2 - y1) * t / seg
+                    bx = x1 + (x2 - x1) * (t + step) / seg
+                    by = y1 + (y2 - y1) * (t + step) / seg
+                    self._d.line([(ax, ay), (bx, by)], fill=color, width=width)
+                t += step
+                pos += step
+                if pos >= (on if drawing else off) - 1e-6:
+                    pos = 0.0
+                    drawing = not drawing
+
+    def create_rectangle(self, x1, y1, x2, y2, **kw):
+        s, ox, oy = self.ss, self.ox, self.oy
+        box = [(x1 + ox) * s, (y1 + oy) * s, (x2 + ox) * s, (y2 + oy) * s]
+        outline = self._c(kw.get("outline"))
+        width = max(1, int(round(float(kw.get("width", 1)) * self.ss)))
+        self._d.rectangle(box, fill=self._c(kw.get("fill")), outline=outline,
+                          width=width if outline else 0)
+        return None
+
+    def create_oval(self, x1, y1, x2, y2, **kw):
+        s, ox, oy = self.ss, self.ox, self.oy
+        box = [(x1 + ox) * s, (y1 + oy) * s, (x2 + ox) * s, (y2 + oy) * s]
+        outline = self._c(kw.get("outline"))
+        width = max(1, int(round(float(kw.get("width", 1)) * self.ss)))
+        self._d.ellipse(box, fill=self._c(kw.get("fill")), outline=outline,
+                        width=width if outline else 0)
+        return None
+
+    def create_arc(self, x1, y1, x2, y2, start=0.0, extent=90.0, **kw):
+        s, ox, oy = self.ss, self.ox, self.oy
+        box = [(x1 + ox) * s, (y1 + oy) * s, (x2 + ox) * s, (y2 + oy) * s]
+        outline = self._c(kw.get("outline"))
+        if outline is None:
+            return None
+        width = max(1, int(round(float(kw.get("width", 1)) * self.ss)))
+        lo, hi = min(start, start + extent), max(start, start + extent)
+        a0 = (-hi) % 360.0
+        a1 = (-lo) % 360.0
+        if a1 <= a0:
+            a1 += 360.0
+        if a1 - a0 < 0.4:
+            return None
+        self._d.arc(box, a0, min(a1, a0 + 359.9), fill=outline, width=width)
+        return None
+
+    def create_vgrad(self, x1, y1, x2, y2, r, top, bottom):
+        """Fill a rounded rect with a vertical gradient (real depth, no banding)."""
+        s, ox, oy = self.ss, self.ox, self.oy
+        bx0 = int(round((x1 + ox) * s))
+        by0 = int(round((y1 + oy) * s))
+        bx1 = int(round((x2 + ox) * s))
+        by1 = int(round((y2 + oy) * s))
+        w, h = bx1 - bx0, by1 - by0
+        if w <= 0 or h <= 0:
+            return
+        c0, c1 = hex_to_rgb(top), hex_to_rgb(bottom)
+        strip = Image.new("RGB", (1, h))
+        for yy in range(h):
+            t = yy / max(1, h - 1)
+            strip.putpixel((0, yy), (int(c0[0] + (c1[0] - c0[0]) * t),
+                                     int(c0[1] + (c1[1] - c0[1]) * t),
+                                     int(c0[2] + (c1[2] - c0[2]) * t)))
+        strip = strip.resize((w, h), Image.NEAREST)
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            [0, 0, w - 1, h - 1], radius=int(round(r * s)), fill=255)
+        self._img.paste(strip, (bx0, by0), mask)
+
+    def create_text(self, x, y, text="", anchor="w", fill="#000000", font=None, **kw):
+        if not text:
+            return None
+        family, size = "Segoe UI", 9
+        if isinstance(font, (tuple, list)) and len(font) >= 2:
+            family, size = font[0], font[1]
+        f = _pil_font(family, size, self.ss)
+        s, ox, oy = self.ss, self.ox, self.oy
+        self._d.text(((x + ox) * s, (y + oy) * s), str(text), font=f,
+                     fill=fill, anchor=_TK_ANCHORS.get(anchor, "lm"))
+        return None
+
+    # -- presentation -----------------------------------------------------
+    def dot_grid(self, step=32, color="#13202c", radius=0.7):
+        for gx in range(step // 2, self.w, step):
+            for gy in range(step // 2, self.h, step):
+                self._d.ellipse([(gx - radius) * self.ss, (gy - radius) * self.ss,
+                                 (gx + radius) * self.ss, (gy + radius) * self.ss],
+                                fill=color)
+
+    def flush(self):
+        img = self._img
+        if self.ss > 1:
+            img = img.resize((self.w, self.h), Image.LANCZOS)
+        if self._photo is None or self._photo.width() != self.w or self._photo.height() != self.h:
+            self._photo = ImageTk.PhotoImage(img, master=self.host)
+            self.host._keep_photo = self._photo   # Tk drops the image if Python GCs it
+            self.host.delete("hud_image")
+            self.host.create_image(0, 0, image=self._photo, anchor="nw", tags="hud_image")
+        else:
+            self._photo.paste(img)
+
 
 # ---------------------------------------------------------------------------
 # الواجهة الرئيسية
@@ -423,6 +657,7 @@ class MicHUD:
         self.canvas = tk.Canvas(self.root, width=self.W, height=self.H, bg=TRANSPARENT,
                                 highlightthickness=0, bd=0)
         self.canvas.pack()
+        self.surface = ImgPainter(self.canvas, self.W, self.H, ss=SS_FACTOR)
         self.canvas.bind("<ButtonPress-1>", self.on_press)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_release)
@@ -633,39 +868,6 @@ class MicHUD:
         finally:
             self.menu.grab_release()
 
-    @staticmethod
-    def rrect(c, x1, y1, x2, y2, r, **kw):
-        pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
-               x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
-        return c.create_polygon(pts, smooth=True, **kw)
-
-    def _glow_line(self, c, pts, color, glow_color, width=2.0, layers=3):
-        for i in range(layers, 0, -1):
-            w = width + i * 2.5
-            alpha_color = blend_color(glow_color, color, i / layers)
-            c.create_line(*pts, fill=alpha_color, width=w, smooth=True, splinesteps=16, capstyle=tk.ROUND)
-        c.create_line(*pts, fill=color, width=width, smooth=True, splinesteps=16, capstyle=tk.ROUND)
-
-    def _glow_dot(self, c, x, y, r, color, glow_color, layers=3):
-        for i in range(layers, 0, -1):
-            expand = i * 1.5
-            alpha_color = blend_color(glow_color, color, i / layers)
-            c.create_oval(x - r - expand, y - r - expand, x + r + expand, y + r + expand,
-                          fill=alpha_color, outline="")
-        c.create_oval(x - r, y - r, x + r, y + r, fill=color, outline="")
-
-    def _gradient_bar(self, c, x, y1, y2, w, color_top, color_bottom, steps=8):
-        h = y2 - y1
-        if h < 1:
-            return
-        step_h = h / steps
-        for i in range(steps):
-            t = i / max(1, steps - 1)
-            color = blend_color(color_top, color_bottom, t)
-            cy = y1 + i * step_h
-            c.create_rectangle(x - w/2, cy, x + w/2, cy + step_h + 0.5,
-                               fill=color, outline="")
-
     def _set_dimensions(self):
         base_w, base_h = HUD_SHAPES[self.hud_shape][1]
         self.W = max(1, int(round(base_w * self.scale)))
@@ -682,473 +884,614 @@ class MicHUD:
             "text": self.colors.get("text", "#e7edf5"),
             "muted": "#526174",
             "edge": "#2c3d50",
+            "screen": blend_color(self.colors.get("background", "#101923"), "#000000", 0.34),
         }
 
+    # ------------------------------------------------------------------
+    # Design system (visual layer)
+    # ------------------------------------------------------------------
+    def _f(self, size, weight="normal"):
+        family = "Segoe UI Semibold" if weight == "bold" else "Segoe UI"
+        return (family, max(6, int(round(size * self.scale))), "normal")
+
+    def _label(self, c, x, y, text, size, color, weight="normal", anchor="w", track=0):
+        if track:
+            text = (" " * track).join(text)
+        return c.create_text(x, y, text=text, anchor=anchor, fill=color,
+                             font=self._f(size, weight))
+
+    def _panel(self, c, x1, y1, x2, y2, r, bg, border, inset=False):
+        """Rounded surface; raised by default, recessed when used as a screen."""
+        if hasattr(c, "create_vgrad"):
+            if inset:
+                c.create_vgrad(x1, y1, x2, y2, r, blend_color(bg, "#000000", 0.30),
+                               blend_color(bg, "#ffffff", 0.03))
+            else:
+                c.create_vgrad(x1, y1, x2, y2, r, blend_color(bg, "#ffffff", 0.055),
+                               blend_color(bg, "#000000", 0.10))
+            c.create_polygon(_rr_pts(x1, y1, x2, y2, r), fill="", outline=border)
+        else:
+            c.create_polygon(_rr_pts(x1, y1, x2, y2, r), fill=bg, outline=border)
+        if inset:
+            c.create_line(x1 + r, y1 + 1.4, x2 - r, y1 + 1.4,
+                          fill=blend_color(bg, "#000000", 0.45))
+            c.create_line(x1 + r, y2 - 1.4, x2 - r, y2 - 1.4,
+                          fill=blend_color(bg, "#ffffff", 0.06))
+        else:
+            c.create_line(x1 + r, y1 + 1.4, x2 - r, y1 + 1.4,
+                          fill=blend_color(bg, "#ffffff", 0.085))
+            c.create_line(x1 + r, y2 - 1.4, x2 - r, y2 - 1.4,
+                          fill=blend_color(bg, "#000000", 0.34))
+
+    def _orb(self, c, x, y, r, bg, border, accent, live, level):
+        c.create_oval(x - r, y - r, x + r, y + r, fill=bg)
+        c.create_oval(x - r * 0.96, y - r * 0.96, x + r * 0.96, y + r * 0.96,
+                      outline=blend_color(bg, "#ffffff", 0.05))
+        c.create_oval(x - r, y - r, x + r, y + r, outline=border)
+        c.create_oval(x - r + 1.4, y - r + 1.4, x + r - 1.4, y + r - 1.4,
+                      outline=blend_color(bg, "#ffffff", 0.06))
+        c.create_oval(x - r + 7, y - r + 7, x + r - 7, y + r - 7,
+                      outline=blend_color(bg, accent, 0.11), width=4.5)
+        if live:
+            ext = 359.9 * max(0.0, min(1.0, level))
+            if ext > 10.0:
+                for ring_r, col, wd in ((7, blend_color(bg, accent, 0.30), 4.5),
+                                        (4, accent, 2.0)):
+                    c.create_arc(x - r + ring_r, y - r + ring_r, x + r - ring_r,
+                                 y + r - ring_r, start=90, extent=-ext,
+                                 style=tk.ARC, outline=col, width=wd)
+
+    def _led(self, c, x, y, color, bg, r=2.6):
+        c.create_oval(x - r * 2.3, y - r * 2.3, x + r * 2.3, y + r * 2.3,
+                      fill=blend_color(bg, color, 0.14), outline="")
+        c.create_oval(x - r * 1.5, y - r * 1.5, x + r * 1.5, y + r * 1.5,
+                      fill=blend_color(bg, color, 0.40), outline="")
+        c.create_oval(x - r, y - r, x + r, y + r, fill=color, outline="")
+        c.create_oval(x - r * 0.42, y - r * 0.58, x + r * 0.08, y - r * 0.08,
+                      fill=blend_color(color, "#ffffff", 0.8), outline="")
+
+    def _segments(self, c, x1, x2, y, h, level, accent, bg, count=None):
+        """Hardware-style segmented VU meter."""
+        span = max(1.0, x2 - x1)
+        count = count or max(6, int(span / 4.4))
+        gap = max(1.0, span * 0.022)
+        w = max(1.0, (span - gap * (count - 1)) / count)
+        filled = max(0.0, min(1.0, level)) * count
+        for i in range(count):
+            sx = x1 + i * (w + gap)
+            frac = (i + 1) / count
+            if i < filled - 1e-6:
+                t = min(1.0, filled - i)
+                col = blend_color(accent, blend_color(accent, "#ffffff", 0.35), 1.0 - t)
+                if frac > 0.80:
+                    col = blend_color(col, RED, (frac - 0.80) / 0.20 * 0.9)
+            else:
+                col = blend_color(bg, "#ffffff", 0.09)
+            c.create_rectangle(sx, y, sx + w, y + h, fill=col, outline="")
+
+    def _wave_screen(self, c, x1, y1, x2, y2, bg, border, accent, live):
+        """Inset 'display' that the spectrum is drawn inside."""
+        r = min(14.0, (y2 - y1) / 2)
+        self._panel(c, x1, y1, x2, y2, r,
+                    blend_color(bg, "#000000", 0.34),
+                    blend_color(border, accent, 0.20 if live else 0.04), inset=True)
+
+
+    # ------------------------------------------------------------------
+    # Wave engine · smooth, size-aware visualisers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _spline(pts, steps=7):
+        """Catmull-Rom through the control points → dense smooth polyline."""
+        if len(pts) < 3:
+            return list(pts)
+        p = [pts[0]] + list(pts) + [pts[-1]]
+        out = []
+        for i in range(len(p) - 3):
+            p0, p1, p2, p3 = p[i], p[i + 1], p[i + 2], p[i + 3]
+            for s in range(steps):
+                t = s / steps
+                t2, t3 = t * t, t * t * t
+                out.append((
+                    0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t
+                           + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
+                           + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+                    0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t
+                           + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
+                           + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)))
+        out.append(pts[-1])
+        return out
+
+    def _signal(self, x1, x2, mid, amp, phase, shape=1, n=13):
+        """Sample a musical-looking signal and return a smooth point list."""
+        span = x2 - x1
+        ctrl = []
+        for i in range(n):
+            t = i / (n - 1)
+            env = 0.38 + 0.62 * math.sin(math.pi * t) ** 0.55   # lively, fades at the ends
+            v = math.sin(t * math.tau * shape + phase)
+            v += 0.32 * math.sin(t * math.tau * (shape * 2.3) - phase * 0.7)
+            v += 0.12 * math.sin(t * math.tau * (shape * 4.1) + phase * 1.3)
+            ctrl.append((x1 + span * t, mid - v * env * amp * 0.62))
+        return self._spline(ctrl)
+
+    @staticmethod
+    def _flat(pts):
+        out = []
+        for x, y in pts:
+            out.extend((x, y))
+        return out
+
+    def _bars(self, c, x1, x2, mid, amp, phase, cols, peak, color_a, color_b,
+              bg, mirror=True, gap=0.45, cap=True):
+        span = max(1.0, x2 - x1)
+        cw = span / cols
+        w = max(1.3, cw * (1 - gap))
+        for i in range(cols):
+            cx = x1 + cw * (i + 0.5)
+            wobble = abs(math.sin(i * 0.7 + phase * 0.55)) * 0.55 + \
+                     0.45 * abs(math.sin(i * 1.9 - phase * 0.9))
+            h = max(0.9, amp * peak * (0.12 + 0.88 * wobble))
+            head = blend_color(color_b, color_a, min(1.0, 0.35 + wobble * 0.65))
+            body = blend_color(bg, color_b, 0.55)
+            style = tk.ROUND if cap else tk.BUTT
+            if mirror:
+                c.create_line(cx, mid - h, cx, mid + h * 0.85, fill=body, width=w, capstyle=style)
+                c.create_line(cx, mid - h, cx, mid - h * 0.45, fill=head, width=w, capstyle=style)
+            else:
+                c.create_line(cx, mid + h * 0.18, cx, mid - h, fill=body, width=w, capstyle=style)
+                c.create_line(cx, mid - h, cx, mid - h * 0.55, fill=head, width=w, capstyle=style)
+
     def draw_wave(self, canvas, style, x1, x2, mid, amp, phase, level,
-                  accent, glow=None, quiet=None):
+                  accent, glow=None, quiet=None, bg=None):
         style = max(0, min(19, int(style or 0)))
         gain = max(0.0, min(1.0, float(level or 0.0)))
         glow = glow or "#c0ffed"
         quiet = quiet or "#526174"
-        dim = "#2b3a49"
+        bg = bg or "#0b1016"
+        c = canvas
         width = max(1.0, x2 - x1)
-        active = gain > 0.025
-        cx = (x1 + x2) / 2
+        active = gain > 0.035
+        soft = blend_color(bg, accent, 0.30)
+        faint = blend_color(bg, accent, 0.13)
+        energy = 0.30 + 0.70 * gain           # keeps quiet input visible, no flat line
+        dot = max(0.9, min(2.1, amp * 0.11))
+        cols = max(9, min(24, int(width / 5.6)))
 
-        canvas.create_line(x1, mid, x2, mid, fill="#1e2d3d", width=1, dash=(1, 6))
+        c.create_line(x1, mid, x2, mid, fill=blend_color(bg, "#ffffff", 0.06), dash=(1, 5))
 
-        if style == 0:
-            for layer in range(3):
-                pts = []
-                for i in range(100):
-                    t = i / 99
-                    v = math.sin(t * math.tau * 2.0 + phase * 0.8 + layer * 0.5)
-                    env = 0.2 + 0.8 * (math.sin(math.pi * t) ** 0.7)
-                    y = mid - v * amp * gain * env * (1 - layer * 0.2)
-                    pts.extend((x1 + width * t, y))
-                if active:
-                    color = blend_color(accent, glow, layer / 3)
-                    canvas.create_line(*pts, fill=color, width=2.5 - layer * 0.5,
-                                       smooth=True, splinesteps=16)
+        if not active:
+            return
 
-        elif style == 1:
-            for i in range(50):
-                t = (i / 50 + phase * 0.02) % 1
-                x = x1 + t * width
-                h = amp * gain * (0.3 + 0.7 * abs(math.sin(i * 0.5 + phase * 0.6)))
-                w = 2 + gain * 3
-                self._glow_dot(canvas, x, mid - h, w, accent, glow, layers=3)
-                self._glow_dot(canvas, x, mid + h * 0.5, w * 0.7, glow, accent, layers=2)
+        if style == 0:      # Crystal Waves · clean oscilloscope
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 1.15)
+            echo = self._signal(x1, x2, mid, amp * energy * 0.55, phase - 0.9, 1.55)
+            c.create_line(*self._flat(echo), fill=blend_color(bg, accent, 0.22), width=1.4)
+            c.create_line(*self._flat(pts), fill=blend_color(bg, accent, 0.26), width=5.0)
+            c.create_line(*self._flat(pts), fill=accent, width=1.9)
+            return
 
-        elif style == 2:
-            for i in range(60):
-                t = (i / 60 + phase * 0.015) % 1
-                x = x1 + t * width
-                spread = amp * gain * 1.2
-                y = mid + math.sin(i * 1.7 + phase * 0.8) * spread
-                r = 0.8 + gain * 1.5 * noise(i + phase, seed=3)
-                if active:
-                    self._glow_dot(canvas, x, y, r,
-                                   glow if i % 7 == 0 else accent,
-                                   accent, layers=2)
+        if style == 1:      # Neon Flow · glowing bars
+            self._bars(c, x1, x2, mid, amp, phase, cols, energy, glow, accent, bg)
+            return
 
-        elif style == 3:
-            for ribbon in range(5):
-                pts = []
-                offset = ribbon * 0.3
-                for i in range(80):
-                    t = i / 79
-                    v = math.sin(t * math.tau * 1.5 + phase * 0.6 + offset)
-                    env = 0.3 + 0.7 * (math.sin(math.pi * t) ** 0.8)
-                    x = x1 + width * t
-                    y = mid + v * amp * gain * env * 0.5 + (ribbon - 2) * 3
-                    pts.extend((x, y))
-                if active:
-                    color = blend_color(accent, glow, ribbon / 5)
-                    canvas.create_line(*pts, fill=color, width=2, smooth=True)
+        if style == 2:      # Particle Storm · beads riding the wave
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 1.4)
+            step = max(2, len(pts) // 34)
+            for i in range(0, len(pts), step):
+                px, py = pts[i]
+                r = dot * (0.55 + 0.7 * abs(math.sin(i * 0.35 + phase)))
+                c.create_oval(px - r, py - r, px + r, py + r,
+                              fill=glow if i % 12 == 0 else accent, outline="")
+            return
 
-        elif style == 4:
-            for col in range(30):
-                x = x1 + col * width / 30
-                for row in range(8):
-                    t = (row / 8 + phase * 0.03 + col * 0.1) % 1
-                    y = mid - amp * gain * t * 2
-                    r = 1.5 * (1 - t) * gain
-                    if active and r > 0.5:
-                        alpha = 1 - t
-                        color = blend_color(glow, accent, alpha)
-                        canvas.create_oval(x-r, y-r, x+r, y+r, fill=color, outline="")
+        if style == 3:      # Aurora Borealis · layered ribbons
+            for k in range(3):
+                pts = self._signal(x1, x2, mid + (k - 1) * amp * 0.52,
+                                   amp * energy * (1 - k * 0.26), phase + k * 0.55, 0.85 + k * 0.4)
+                flat = self._flat(pts)
+                c.create_line(*flat, fill=blend_color(bg, accent, 0.20), width=4.0)
+                c.create_line(*flat, fill=blend_color(accent, glow, 0.20 + k * 0.25), width=1.8)
+            return
 
-        elif style == 5:
-            for i in range(40):
-                t = i / 40
-                x = x1 + t * width
-                for j in range(3):
-                    angle = phase * 0.5 + i * 0.3 + j * 2
-                    r = amp * gain * (0.3 + 0.7 * abs(math.sin(angle)))
-                    y = mid + math.cos(angle) * r * 0.5
-                    size = 2 + gain * 2 * noise(i + j, seed=6)
-                    if active:
-                        self._glow_dot(canvas, x, y, size, accent, glow, layers=2)
+        if style == 4:      # Digital Rain · falling streaks
+            cols_r = max(6, min(10, int(width / 8.5)))
+            wd = max(1.6, width / cols_r * 0.34)
+            for i in range(cols_r):
+                cx = x1 + width * (i + 0.5) / cols_r
+                h = amp * 1.35 * (0.45 + 0.55 * noise(i, seed=8))
+                head = mid - amp * 0.95 + ((phase * 0.05 + noise(i, seed=9)) % 1.0) * (amp * 1.9 - h)
+                tail = min(mid + amp * 0.95, head + h)
+                c.create_line(cx, head, cx, tail, fill=faint, width=wd)
+                c.create_line(cx, head, cx, head + h * 0.45, fill=soft, width=wd)
+                c.create_line(cx, head, cx, head + h * 0.16, fill=glow, width=wd)
+            return
 
-        elif style == 6:
-            for i in range(50):
-                t = (i / 50 + phase * 0.01) % 1
-                x = x1 + t * width
-                y = mid + math.sin(i * 2.1 + phase * 0.7) * amp * gain * 0.8
-                r = 1 + gain * 2 * abs(math.sin(i * 0.8 + phase * 0.5))
-                if active:
-                    self._glow_dot(canvas, x, y, r,
-                                   glow if i % 5 == 0 else accent,
-                                   accent, layers=3)
+        if style == 5:      # Plasma Field · filled body + bright crest
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 0.95)
+            body = [(x1, mid)] + pts + [(x2, mid)]
+            c.create_polygon(*self._flat(body), fill=blend_color(bg, accent, 0.30), outline="")
+            c.create_line(*self._flat(pts), fill=blend_color(accent, glow, 0.55), width=2.6)
+            c.create_line(*self._flat(pts), fill=glow, width=1.2)
+            return
 
-        elif style == 7:
-            pts_top, pts_bot = [], []
-            for i in range(100):
-                t = i / 99
-                v = (0.6 * math.sin(t * math.tau * 2.0 + phase * 0.9)
-                     + 0.4 * math.sin(t * math.tau * 4.5 - phase * 0.6))
-                env = 0.25 + 0.75 * (math.sin(math.pi * t) ** 0.7)
-                x = x1 + width * t
-                y_top = mid - v * amp * gain * env
-                y_bot = mid + v * 0.6 * amp * gain * env
-                pts_top.extend((x, y_top))
-                pts_bot.extend((x, y_bot))
-            if active:
-                poly = pts_top + pts_bot[::-1]
-                canvas.create_polygon(*poly, fill=blend_color(accent, glow, 0.3),
-                                      outline="", smooth=True)
-                self._glow_line(canvas, pts_top, accent, glow, width=2.5, layers=3)
+        if style == 6:      # Quantum Dots · twinkling cluster
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 1.7)
+            step = max(3, len(pts) // 18)
+            for i in range(0, len(pts), step):
+                px, py = pts[i]
+                pulse = 0.45 + 0.55 * abs(math.sin(i * 0.5 + phase * 1.6))
+                r = dot * 1.35 * pulse
+                halo = r * 2.6
+                c.create_oval(px - halo, py - halo, px + halo, py + halo,
+                              fill=blend_color(bg, accent, 0.10 * pulse), outline="")
+                c.create_oval(px - r, py - r, px + r, py + r,
+                              fill=blend_color(accent, glow, pulse), outline="")
+            return
 
-        elif style == 8:
-            for i in range(35):
-                t = (i / 35 + phase * 0.02) % 1
-                x = x1 + t * width
-                h = amp * gain * abs(math.sin(i * 1.3 + phase * 0.8))
-                y = mid + math.sin(i * 0.9 + phase * 0.6) * h * 0.6
-                length = 2 + gain * 4
-                angle = math.atan2(math.cos(i * 0.9 + phase), 1) * 0.6
-                dx = math.cos(angle) * length
-                dy = math.sin(angle) * length
-                if active:
-                    canvas.create_line(x - dx, y + dy, x + dx, y - dy,
-                                       fill=glow, width=2.5)
-                    canvas.create_line(x - dx, y + dy, x + dx, y - dy,
-                                       fill=accent, width=1.2)
+        if style == 7:      # Liquid Metal · beveled wave
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 1.05)
+            flat = self._flat(pts)
+            c.create_line(*flat, fill=blend_color(bg, accent, 0.30), width=max(3.0, amp * 0.36))
+            c.create_line(*flat, fill=blend_color(accent, glow, 0.45), width=max(1.6, amp * 0.18))
+            c.create_line(*flat, fill=blend_color(glow, "#ffffff", 0.30), width=max(1.0, amp * 0.05))
+            return
 
-        elif style == 9:
-            for i in range(10):
-                y = mid - amp * 0.9 + i * amp * 0.2
-                canvas.create_line(x1, y, x2, y, fill="#1e2d3d", width=0.5)
+        if style == 8:      # Electric Storm · jagged trace
+            n = 26
             pts = []
-            for i in range(90):
-                t = i / 89
-                v = (0.7 * math.sin(t * math.tau * 2.0 + phase * 0.7)
-                     + 0.3 * math.sin(t * math.tau * 5.0 - phase * 0.4))
-                env = 0.3 + 0.7 * (math.sin(math.pi * t) ** 0.65)
-                x = x1 + width * t
-                y = mid - v * amp * gain * env
-                pts.extend((x, y))
-            if active:
-                self._glow_line(canvas, pts, accent, glow, width=2.8, layers=3)
-
-        elif style == 10:
-            for i in range(70):
-                t = (i / 70 + phase * 0.012) % 1
-                x = x1 + t * width
-                spread = amp * gain * 1.1
-                y = mid + math.sin(i * 1.9 + phase * 0.9) * spread
-                r = 0.6 + gain * 1.2 * noise(i + phase, seed=11)
-                if active:
-                    color = blend_color(glow, accent, noise(i, seed=12))
-                    canvas.create_oval(x-r, y-r, x+r, y+r, fill=color, outline="")
-
-        elif style == 11:
-            for i in range(45):
-                t = i / 45
-                x = x1 + t * width
-                h = amp * gain * (0.4 + 0.6 * abs(math.sin(i * 0.6 + phase * 0.7)))
-                w = 3 + gain * 2
-                color = blend_color("#ff7185", accent, h / (amp * gain + 0.01))
-                self._gradient_bar(canvas, x, mid - h, mid + h * 0.3, w,
-                                   glow, color, steps=6)
-
-        elif style == 12:
-            for i in range(35):
-                t = (i / 35 + phase * 0.018) % 1
-                x = x1 + t * width
-                y = mid + math.sin(i * 1.5 + phase * 0.6) * amp * gain * 0.7
-                size = 2 + gain * 2.5
-                pts = []
-                for k in range(6):
-                    angle = k * math.pi / 3 + phase * 0.2
-                    px = x + size * math.cos(angle)
-                    py = y + size * math.sin(angle)
-                    pts.extend((px, py))
-                if active:
-                    canvas.create_polygon(*pts, fill=blend_color(glow, accent, 0.5),
-                                          outline=glow, width=1)
-
-        elif style == 13:
-            n = 35
-            step = width / n
             for i in range(n):
-                t = i / n
-                h = amp * gain * (0.3 + 0.7 * abs(math.sin(i * 0.5 + phase * 0.8)))
-                x = x1 + i * step + step / 2
-                w = step * 0.6
-                color = blend_color(accent, glow, t)
-                self._gradient_bar(canvas, x, mid - h, mid + h, w,
-                                   glow, color, steps=8)
+                t = i / (n - 1)
+                env = math.sin(math.pi * t) ** 0.5
+                v = math.sin(t * math.tau * 2.2 + phase * 1.4)
+                v *= 0.45 + 0.55 * noise(t * 7 + phase * 0.3, seed=11)
+                pts.append((x1 + width * t, mid - v * env * amp * energy * 0.75))
+            flat = self._flat(pts)
+            c.create_line(*flat, fill=blend_color(bg, accent, 0.28), width=4.0)
+            c.create_line(*flat, fill=glow, width=1.6)
+            return
 
-        elif style == 14:
-            pts = []
-            for i in range(100):
-                t = i / 99
-                v = math.sin(t * math.tau * 2.0 + phase * 0.8)
-                env = 0.2 + 0.8 * (math.sin(math.pi * t) ** 0.7)
-                y = mid - v * amp * gain * env
-                pts.extend((x1 + width * t, y))
-            if active:
-                self._glow_line(canvas, pts, accent, glow, width=3, layers=3)
-                for i in range(0, len(pts), 20):
-                    x, y = pts[i], pts[i+1]
-                    self._glow_dot(canvas, x, y, 2, glow, accent, layers=2)
+        if style == 9:      # Holographic · scan mesh + trace
+            grid = blend_color(bg, accent, 0.18)
+            for k in (-1.4, -0.7, 0.7, 1.4):
+                c.create_line(x1, mid + k * amp * 0.55, x2, mid + k * amp * 0.55, fill=grid)
+            for k in range(5):
+                gx = x1 + width * (k + 0.5) / 5
+                c.create_line(gx, mid - amp * 0.80, gx, mid + amp * 0.80, fill=grid)
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 1.3)
+            c.create_line(*self._flat(pts), fill=accent, width=1.9)
+            c.create_line(*self._flat(pts), fill=blend_color(bg, glow, 0.30), width=4.2)
+            return
 
-        elif style == 15:
-            cols = 25
-            rows = 5
+        if style == 10:     # Cosmic Dust · guide wave + drifting dust
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 1.2)
+            c.create_line(*self._flat(pts), fill=blend_color(bg, accent, 0.22), width=1.4)
             for i in range(cols):
+                px = x1 + width * noise(i, seed=13)
+                py = mid + (noise(i, seed=17) - 0.5) * amp * 1.5 * gain
+                r = dot * (0.35 + 0.55 * noise(i + phase * 0.15, seed=19))
+                c.create_oval(px - r, py - r, px + r, py + r,
+                              fill=blend_color(accent, glow, noise(i, seed=23)), outline="")
+            return
+
+        if style == 11:     # Fire Waves · warm rising bars
+            for i in range(cols):
+                cx = x1 + width * (i + 0.5) / cols
+                wob = abs(math.sin(i * 0.62 + phase * 0.55)) * 0.6 + \
+                      0.4 * abs(math.sin(i * 1.7 - phase * 0.8))
+                h = max(1.0, amp * energy * (0.15 + 0.85 * wob))
+                w = max(1.4, width / cols * 0.55)
+                c.create_line(cx, mid + h * 0.15, cx, mid - h, fill=blend_color(bg, RED, 0.45),
+                              width=w, capstyle=tk.ROUND)
+                c.create_line(cx, mid - h * 0.35, cx, mid - h, fill=blend_color(accent, glow, 0.55),
+                              width=w, capstyle=tk.ROUND)
+                c.create_line(cx, mid - h * 0.86, cx, mid - h, fill=glow, width=w,
+                              capstyle=tk.ROUND)
+            return
+
+        if style == 12:     # Ice Crystals · mirrored thin bars
+            for i in range(cols):
+                cx = x1 + width * (i + 0.5) / cols
+                wob = abs(math.sin(i * 0.55 + phase * 0.45))
+                h = max(0.9, amp * energy * (0.18 + 0.82 * wob))
+                w = max(1.2, width / cols * 0.34)
+                c.create_line(cx, mid - h, cx, mid + h * 0.85,
+                              fill=blend_color(accent, glow, 0.25 + 0.45 * wob),
+                              width=w, capstyle=tk.ROUND)
+            return
+
+        if style == 13:     # Sound Spectrum · dense centre bars
+            self._bars(c, x1, x2, mid, amp, phase * 1.5, cols + 5, energy,
+                       glow, accent, bg, mirror=True, gap=0.34)
+            return
+
+        if style == 14:     # Wave Rider · bold glowing trace
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 0.85)
+            flat = self._flat(pts)
+            c.create_line(*flat, fill=blend_color(bg, accent, 0.25), width=6.0)
+            c.create_line(*flat, fill=glow, width=2.2)
+            return
+
+        if style == 15:     # Neon Grid · stacked blocks
+            rows = 3
+            for i in range(cols):
+                cx = x1 + width * (i + 0.5) / cols
+                level_i = abs(math.sin(i * 0.62 + phase * 0.6)) * energy
                 for j in range(rows):
-                    t = i / cols
-                    x = x1 + t * width
-                    y = mid + (j - rows/2) * amp * 0.3
-                    h = amp * gain * abs(math.sin(i * 0.4 + j * 0.8 + phase * 0.6))
-                    r = 1 + gain * 1.5 * (h / (amp * gain + 0.01))
-                    if active and r > 1:
-                        self._glow_dot(canvas, x, y - h * 0.5, r, accent, glow, layers=2)
+                    if level_i < (j + 0.35) / rows:
+                        continue
+                    cell = max(1.6, amp * 0.19)
+                    py = mid + amp * 0.45 - j * cell * 1.9
+                    c.create_rectangle(cx - cell, py - cell, cx + cell, py + cell,
+                                       fill=blend_color(accent, glow, j / rows * 0.7),
+                                       outline="")
+            return
 
-        elif style == 16:
-            for i in range(40):
-                t = (i / 40 + phase * 0.025) % 1
-                x = x1 + t * width
-                pulse = abs(math.sin(i * 0.7 + phase * 0.5))
-                h = amp * gain * pulse
-                y = mid + math.sin(i * 1.2 + phase * 0.8) * h * 0.6
-                r = 1.5 + gain * 2 * pulse
-                if active:
-                    self._glow_dot(canvas, x, y, r,
-                                   glow if i % 6 == 0 else accent,
-                                   accent, layers=3)
+        if style == 16:     # Pulse Matrix · two dot rows
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 1.1)
+            step = max(2, len(pts) // 24)
+            for i in range(0, len(pts), step):
+                px, py = pts[i]
+                for k in (-1, 1):
+                    r = dot * (1.0 - 0.25 * abs(k))
+                    c.create_oval(px - r, py + k * amp * 0.30 - r, px + r,
+                                  py + k * amp * 0.30 + r,
+                                  fill=accent if k < 0 else soft, outline="")
+            return
 
-        elif style == 17:
-            for i in range(80):
-                t = (i / 80 + phase * 0.01) % 1
-                x = x1 + t * width
-                y = mid + math.sin(i * 2.3 + phase * 0.7) * amp * gain * 0.9
-                r = 0.5 + gain * 1.8 * noise(i + phase, seed=18)
-                if active:
-                    brightness = noise(i, seed=19)
-                    color = blend_color(glow, accent, brightness)
-                    canvas.create_oval(x-r, y-r, x+r, y+r, fill=color, outline="")
+        if style == 17:     # Star Field · trace + stars
+            pts = self._signal(x1, x2, mid, amp * energy, phase, 1.25)
+            c.create_line(*self._flat(pts), fill=blend_color(bg, accent, 0.28), width=1.3)
+            step = max(2, len(pts) // 18)
+            for i in range(0, len(pts), step):
+                px, py = pts[i]
+                r = dot * (0.5 + 0.8 * noise(i, seed=31))
+                yy = py + (noise(i, seed=29) - 0.5) * amp * 0.7
+                c.create_oval(px - r, yy - r, px + r, yy + r,
+                              fill=blend_color(accent, glow, noise(i, seed=37)), outline="")
+            return
 
-        elif style == 18:
-            for layer in range(4):
-                pts = []
-                offset = layer * 0.4
-                for i in range(90):
-                    t = i / 89
-                    v = math.sin(t * math.tau * 2.0 + phase * 0.7 + offset)
-                    env = 0.25 + 0.75 * (math.sin(math.pi * t) ** 0.7)
-                    x = x1 + width * t
-                    y = mid - v * amp * gain * env * (1 - layer * 0.15) + (layer - 1.5) * 2
-                    pts.extend((x, y))
-                if active:
-                    color = blend_color(accent, glow, layer / 4)
-                    canvas.create_line(*pts, fill=color, width=2.2 - layer * 0.3,
-                                       smooth=True, splinesteps=14)
+        if style == 18:     # Energy Flow · trace + travelling packets
+            pts = self._signal(x1, x2, mid, amp * energy, phase * 0.8, 0.95)
+            flat = self._flat(pts)
+            c.create_line(*flat, fill=blend_color(bg, accent, 0.40), width=1.8)
+            n = len(pts)
+            for i in range(9):
+                idx = int(((i / 9 + phase * 0.035) % 1.0) * (n - 1))
+                px, py = pts[idx]
+                r = dot * 1.1
+                c.create_oval(px - r * 2.0, py - r * 2.0, px + r * 2.0, py + r * 2.0,
+                              fill=blend_color(bg, glow, 0.18), outline="")
+                c.create_oval(px - r, py - r, px + r, py + r, fill=glow, outline="")
+            return
 
-        else:
-            pts = []
-            for i in range(100):
-                t = i / 99
-                v = (0.6 * math.sin(t * math.tau * 2.0 + phase * 0.8)
-                     + 0.3 * math.sin(t * math.tau * 4.5 - phase * 0.5)
-                     + 0.1 * noise(t * 10 + phase * 0.2, seed=20))
-                env = 0.2 + 0.8 * (math.sin(math.pi * t) ** 0.7)
-                y = mid - v * amp * gain * env
-                pts.extend((x1 + width * t, y))
-            if active:
-                self._glow_line(canvas, pts, accent, glow, width=3, layers=3)
-                for i in range(20):
-                    t = (i / 20 + phase * 0.03) % 1
-                    x = x1 + t * width
-                    idx = int(t * 99)
-                    if idx < len(pts) // 2:
-                        y = pts[idx * 2 + 1]
-                        r = 1 + gain * 1.5 * noise(i + phase, seed=21)
-                        self._glow_dot(canvas, x, y - 3, r, glow, accent, layers=2)
+        # 19 · Final Frontier · layered traces + sparkles
+        for k, off in ((0, 0.0), (1, 0.34)):
+            pts = self._signal(x1, x2, mid, amp * energy * (1 - k * 0.35),
+                               phase + off, 1.0 + k * 0.4)
+            c.create_line(*self._flat(pts),
+                          fill=blend_color(accent, glow, k * 0.4) if k == 0
+                          else blend_color(bg, accent, 0.45),
+                          width=2.2 - k * 0.9)
+        for i in range(8):
+            px = x1 + width * ((i / 8 + phase * 0.02) % 1.0)
+            py = mid - math.sin(i * 1.7 + phase) * amp * energy * 0.6
+            r = dot * 0.8
+            c.create_oval(px - r, py - r, px + r, py + r, fill=glow, outline="")
 
-    def _draw_mic(self, c, x, y, radius, accent, muted=False, level=0.0):
-        """Modern studio microphone icon with a reactive audio halo."""
-        pulse = 1.0 + (0.035 * math.sin(self.phase * 2) if not muted else 0)
-        r = max(8, radius * pulse)
+    def _draw_mic(self, c, x, y, s, accent, muted=False, level=0.0):
+        """Stroke-style studio microphone with a reactive level ring."""
         bg = self.colors["background"]
-        shell = "#101d2c"
-        metal = "#d9e8f5"
+        stroke = RED if muted else accent
+        metal = blend_color(bg, "#ffffff", 0.62) if not muted else blend_color(bg, "#ffffff", 0.40)
 
-        c.create_oval(x-r-4, y-r-4, x+r+4, y+r+4,
-                      fill=blend_color(bg, accent, 0.16), outline="")
-        c.create_oval(x-r, y-r, x+r, y+r,
-                      fill=shell, outline=blend_color(accent, "#ffffff", 0.22), width=1.2)
-
+        # --- level ring ----------------------------------------------------
         if not muted:
-            extent = max(8, min(300, int(300 * max(0.05, level))))
-            c.create_arc(x-r-2, y-r-2, x+r+2, y+r+2,
-                         start=270, extent=extent, style=tk.ARC,
-                         outline=accent, width=max(1, r*0.075))
-        else:
-            c.create_arc(x-r-2, y-r-2, x+r+2, y+r+2,
-                         start=35, extent=290, style=tk.ARC,
-                         outline=RED, width=max(1, r*0.075))
-
-        cap_w, cap_top = r*0.72, y-r*0.67
-        cap_bottom = y+r*0.40
-        c.create_oval(x-cap_w/2, cap_top, x+cap_w/2, cap_top+cap_w*0.55,
-                      fill="#e8f2fb", outline="")
-        c.create_rectangle(x-cap_w/2, cap_top+cap_w*0.27,
-                           x+cap_w/2, cap_bottom-cap_w*0.18,
-                           fill="#c8d8e8", outline="")
-        c.create_arc(x-cap_w/2, cap_bottom-cap_w*0.55,
-                     x+cap_w/2, cap_bottom+cap_w*0.12,
-                     start=180, extent=180, style=tk.ARC,
-                     outline="#e8f2fb", width=max(1, r*0.10))
-
-        for i in range(4):
-            yy = cap_top + cap_w*0.40 + i*cap_w*0.19
-            c.create_line(x-cap_w*0.25, yy, x+cap_w*0.25, yy,
-                          fill="#526a82", width=max(1, r*0.035))
-        c.create_line(x-cap_w*0.24, cap_top+cap_w*0.30,
-                      x-cap_w*0.24, cap_bottom-cap_w*0.22,
-                      fill="#ffffff", width=max(1, r*0.035))
-
-        mount_top, mount_bottom = y+r*0.12, y+r*0.72
-        c.create_arc(x-r*0.58, mount_top, x+r*0.58, mount_bottom,
-                     start=180, extent=180, style=tk.ARC,
-                     outline=accent if not muted else RED,
-                     width=max(1.4, r*0.10))
-        c.create_line(x, mount_bottom-r*0.03, x, y+r*0.88,
-                      fill=metal, width=max(1, r*0.075))
-        c.create_line(x-r*0.25, y+r*0.90, x+r*0.25, y+r*0.90,
-                      fill=metal, width=max(1.4, r*0.09))
-
+            for k, rr_ in ((1.34, 0.045), (1.16, 0.075)):
+                c.create_oval(x - s * rr_, y - s * rr_, x + s * rr_, y + s * rr_,
+                              fill=blend_color(bg, accent, k), outline="")
+        rr = s * 0.94
+        c.create_oval(x - rr, y - rr, x + rr, y + rr, outline=blend_color(bg, stroke, 0.13))
         if muted:
-            c.create_line(x-r*0.55, y-r*0.55, x+r*0.55, y+r*0.55,
-                          fill=RED, width=max(2, r*0.15), capstyle=tk.ROUND)
-        elif level > 0.18:
-            for side in (-1, 1):
-                for n in range(2):
-                    yy = y-r*0.10+n*r*0.22
-                    xx = x+side*r*(0.67+n*0.08)
-                    c.create_arc(xx-r*0.22, yy-r*0.22, xx+r*0.22, yy+r*0.22,
-                                 start=side*90-45, extent=90,
-                                 style=tk.ARC, outline=accent,
-                                 width=max(1, r*0.055))
+            c.create_arc(x - rr, y - rr, x + rr, y + rr, start=0, extent=359.9,
+                         style=tk.ARC, outline=blend_color(stroke, bg, 0.15),
+                         width=max(1.6, s * 0.09))
+        else:
+            ext = 359.9 * max(0.0, min(1.0, level))
+            if ext > 10.0:
+                c.create_arc(x - rr, y - rr, x + rr, y + rr, start=90, extent=-ext,
+                             style=tk.ARC, outline=blend_color(bg, stroke, 0.30),
+                             width=max(3.2, s * 0.20))
+                c.create_arc(x - rr, y - rr, x + rr, y + rr, start=90, extent=-ext,
+                             style=tk.ARC, outline=stroke, width=max(1.6, s * 0.10))
+
+        # --- capsule body ---------------------------------------------------
+        half = s * 0.28
+        top, bot = y - s * 0.56, y + s * 0.24
+        c.create_polygon(_rr_pts(x - half, top, x + half, bot, half, 10),
+                         fill=blend_color(bg, "#ffffff", 0.10 if not muted else 0.05),
+                         outline=metal if not muted else blend_color(metal, bg, 0.25),
+                         width=max(1.4, s * 0.08))
+
+        # grille slots
+        g_top = top + half * 0.85
+        g_bot = bot - half * 1.15
+        rows = 3 if s < 22 else 4
+        for i in range(rows):
+            yy = g_top + (g_bot - g_top) * i / max(1, rows - 1)
+            c.create_line(x - half * 0.56, yy, x + half * 0.56, yy,
+                          fill=blend_color(bg, "#ffffff", 0.42 if not muted else 0.22),
+                          width=max(1.0, s * 0.045))
+
+        # --- yoke, stem, base ----------------------------------------------
+        yoke = s * 0.44
+        c.create_arc(x - yoke, y - s * 0.05 - yoke, x + yoke, y - s * 0.05 + yoke,
+                     start=200, extent=140, style=tk.ARC,
+                     outline=metal, width=max(1.4, s * 0.075))
+        c.create_line(x, y + s * 0.40, x, y + s * 0.60, fill=metal,
+                      width=max(1.2, s * 0.06))
+        c.create_line(x - s * 0.17, y + s * 0.66, x + s * 0.17, y + s * 0.66,
+                      fill=metal, width=max(1.4, s * 0.075), capstyle=tk.ROUND)
+
+        # --- mute slash -----------------------------------------------------
+        if muted:
+            c.create_line(x - s * 0.50, y - s * 0.54, x + s * 0.50, y + s * 0.32,
+                          fill=blend_color(bg, RED, 0.30),
+                          width=max(4.0, s * 0.22), capstyle=tk.ROUND)
+            c.create_line(x - s * 0.50, y - s * 0.54, x + s * 0.50, y + s * 0.32,
+                          fill=RED, width=max(2.0, s * 0.11), capstyle=tk.ROUND)
 
     def draw(self):
-        c = self.canvas
+        c = self.surface
         c.delete("all")
         pal = self._palette()
-        accent = pal["accent"] if self.connected and not self.muted else (RED if self.muted else GRAY)
+        bg = pal["background"]
+        text = pal["text"]
+        accent = pal["accent"]
         glow = pal["glow"]
-        status = "LIVE" if self.connected and not self.muted else ("MUTE" if self.muted else "WAIT")
-        bg, edge, text = pal["background"], pal["edge"], pal["text"]
-        meter = self.level if self.connected and not self.muted else 0.0
+        live = self.connected and not self.muted
+        muted = self.muted
+        state = accent if live else (RED if muted else GRAY)
+        status = "LIVE" if live else ("MUTE" if muted else "WAIT")
+        meter = self.level if live else 0.0
+        panel_bg = blend_color(bg, RED, 0.055) if muted else bg
+        border = blend_color(panel_bg, state, 0.30 if live else 0.20)
+        edge = blend_color(panel_bg, "#ffffff", 0.10)
+        dim = blend_color(panel_bg, text, 0.46)
         u = self._u
-
         shape = self.hud_shape
+        wave_style = self.cfg.get("wave_style", 0)
+        quiet = pal["muted"]
+        tiny = self.scale >= 0.88
 
         if shape == 0:
-            self.rrect(c, u(1), u(1), self.W-u(1), self.H-u(1), u(17), fill=bg, outline=edge, width=1)
-            self._draw_mic(c,u(29),u(28),u(19),accent,self.muted,meter)
-            c.create_text(u(55),u(21),text="MIC",anchor="w",fill=text,font=("Segoe UI",max(6,int(u(8))),"bold"))
-            c.create_text(u(55),u(34),text="INPUT 01",anchor="w",fill=MUTED_TEXT,font=("Segoe UI",max(4,int(u(5))),"bold"))
-            c.create_line(u(94),u(11),u(94),u(45),fill=edge,width=1)
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(104),u(193),u(28),u(13.5),self.phase,meter,accent,glow,pal["muted"])
-            c.create_line(u(201),u(11),u(201),u(45),fill=edge,width=1)
-            self.rrect(c,u(209),u(14),u(241),u(42),u(9),fill="#1a2837",outline=edge,width=1)
-            c.create_oval(u(215),u(19),u(221),u(25),fill=accent,outline="")
-            c.create_text(u(225),u(22),text=status,anchor="w",fill=accent,font=("Segoe UI",max(4,int(u(6))),"bold"))
-            c.create_line(u(215),u(33),u(235),u(33),fill="#34485b",width=max(1,u(2)),capstyle=tk.ROUND)
-            if meter>.005:
-                c.create_line(u(215),u(33),u(215+20*meter),u(33),fill=accent,width=max(1,u(2)),capstyle=tk.ROUND)
-            c.create_text(u(235),u(37),text=f"{int(meter*100):02d}%",anchor="e",fill=MUTED_TEXT,font=("Segoe UI",max(4,int(u(5)))))
+            self._panel(c, u(1), u(1), u(317), u(65), u(20), panel_bg, border)
+            self._draw_mic(c, u(45), u(33), u(19), state, muted, meter)
+            self._label(c, u(80), u(24), "MIC", 9, text, "bold")
+            if tiny:
+                self._label(c, u(80), u(37), "INPUT 01", 6.5, dim)
+            c.create_line(u(146), u(15), u(146), u(51), fill=edge)
+            self._wave_screen(c, u(156), u(14), u(242), u(52), panel_bg, border, state, live)
+            self.draw_wave(c, wave_style, u(168), u(230), u(33), u(17),
+                           self.phase, meter, state, glow, quiet, pal["screen"])
+            c.create_line(u(252), u(15), u(252), u(51), fill=edge)
+            self._led(c, u(265), u(26), state, panel_bg, u(2.8))
+            self._label(c, u(274), u(26), status, 7, state, "bold")
+            self._segments(c, u(258), u(306), u(40), u(4), meter, state, panel_bg, count=12)
 
         elif shape == 1:
-            self.rrect(c,u(1),u(1),self.W-u(1),self.H-u(1),u(13),fill=bg,outline=edge,width=1)
-            c.create_text(u(15),u(12),text="VOICEMEETER  /  INPUT MONITOR",anchor="w",fill=MUTED_TEXT,font=("Segoe UI",max(5,int(u(6))),"bold"))
-            c.create_line(u(12),u(20),u(304),u(20),fill=edge,width=1)
-            self._draw_mic(c,u(30),u(44),u(15),accent,self.muted,meter)
-            c.create_text(u(51),u(39),text="MIC",anchor="w",fill=text,font=("Segoe UI",max(6,int(u(8))),"bold"))
-            c.create_text(u(51),u(50),text=status,anchor="w",fill=accent,font=("Segoe UI",max(5,int(u(6))),"bold"))
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(103),u(250),u(45),u(17),self.phase,meter,accent,glow,pal["muted"])
-            c.create_line(u(263),u(27),u(263),u(60),fill=edge,width=1)
-            c.create_text(u(288),u(40),text=f"{int(meter*100):02d}",fill=accent,font=("Segoe UI",max(8,int(u(11))),"bold"))
-            c.create_text(u(288),u(52),text="LEVEL",fill=MUTED_TEXT,font=("Segoe UI",max(4,int(u(5))),"bold"))
+            self._panel(c, u(1), u(1), u(351), u(83), u(16), panel_bg, border)
+            if tiny:
+                self._label(c, u(16), u(15), "VOICEMEETER  INPUT MONITOR", 6, dim, "bold", track=1)
+            c.create_line(u(14), u(25), u(338), u(25), fill=edge)
+            self._draw_mic(c, u(38), u(54), u(18), state, muted, meter)
+            self._label(c, u(66), u(48), "MIC", 9, text, "bold")
+            self._led(c, u(70), u(62), state, panel_bg, u(2.4))
+            self._label(c, u(78), u(62), status, 6.5, state, "bold")
+            self._wave_screen(c, u(138), u(34), u(284), u(74), panel_bg, border, state, live)
+            self.draw_wave(c, wave_style, u(152), u(270), u(54), u(18),
+                           self.phase, meter, state, glow, quiet)
+            c.create_line(u(294), u(34), u(294), u(74), fill=edge)
+            self._label(c, u(321), u(48), f"{int(meter * 100):02d}", 15, state, "bold", "center")
+            self._label(c, u(336), u(50), "%", 6, dim, "normal", "w")
+            if tiny:
+                self._label(c, u(321), u(67), "LEVEL", 5.5, dim, "bold", "center", track=1)
 
         elif shape == 2:
-            self.rrect(c,u(1),u(1),self.W-u(1),self.H-u(1),u(12),fill=bg,outline=edge,width=1)
-            self._draw_mic(c,u(21),u(21),u(15),accent,self.muted,meter)
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(43),u(150),u(21),u(11),self.phase,meter,accent,glow,pal["muted"])
-            c.create_oval(u(162),u(17),u(168),u(23),fill=accent,outline="")
-            c.create_text(u(175),u(21),text="ON" if status=="LIVE" else status,anchor="w",fill=accent,font=("Segoe UI",max(5,int(u(6))),"bold"))
+            self._panel(c, u(1), u(1), u(231), u(53), u(16), panel_bg, border)
+            self._draw_mic(c, u(28), u(27), u(15), state, muted, meter)
+            self._wave_screen(c, u(51), u(11), u(152), u(43), panel_bg, border, state, live)
+            self.draw_wave(c, wave_style, u(61), u(142), u(27), u(14),
+                           self.phase, meter, state, glow, quiet)
+            self._led(c, u(168), u(27), state, panel_bg, u(2.6))
+            self._label(c, u(176), u(27), status, 6.5, state, "bold")
 
         elif shape == 3:
-            self.rrect(c,u(1),u(1),self.W-u(1),self.H-u(1),u(22),fill=bg,outline=edge,width=1)
-            c.create_text(u(40),u(14),text="MIC",fill=MUTED_TEXT,font=("Segoe UI",max(6,int(u(7))),"bold"))
-            self._draw_mic(c,u(40),u(43),u(23),accent,self.muted,meter)
-            c.create_line(u(13),u(76),u(67),u(76),fill=edge,width=1)
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(10),u(70),u(94),u(19),self.phase,meter,accent,glow,pal["muted"])
-            c.create_text(u(40),u(123),text=status,fill=accent,font=("Segoe UI",max(7,int(u(9))),"bold"))
-            c.create_line(u(15),u(139),u(65),u(139),fill="#34485b",width=max(1,u(2)),capstyle=tk.ROUND)
-            if meter>.005:
-                c.create_line(u(15),u(139),u(15+50*meter),u(139),fill=accent,width=max(1,u(2)),capstyle=tk.ROUND)
+            self._panel(c, u(1), u(1), u(103), u(195), u(24), panel_bg, border)
+            if tiny:
+                self._label(c, u(52), u(19), "MIC", 6.5, dim, "bold", "center", track=1)
+            self._draw_mic(c, u(52), u(57), u(24), state, muted, meter)
+            self._wave_screen(c, u(14), u(90), u(90), u(136), panel_bg, border, state, live)
+            self.draw_wave(c, wave_style, u(24), u(80), u(113), u(20),
+                           self.phase, meter, state, glow, quiet)
+            self._led(c, u(34), u(154), state, panel_bg, u(2.6))
+            self._label(c, u(42), u(154), status, 6.5, state, "bold")
+            self._segments(c, u(18), u(86), u(166), u(4), meter, state, panel_bg, count=11)
+            self._label(c, u(52), u(183), f"{int(meter * 100)}%", 11, state, "bold", "center")
 
         elif shape == 4:
-            cx,cy=u(50),u(50)
-            c.create_oval(u(2),u(2),self.W-u(2),self.H-u(2),fill=bg,outline=edge,width=1)
-            c.create_oval(u(7),u(7),self.W-u(7),self.H-u(7),outline="#26394c",width=1)
-            self._draw_mic(c,cx,u(38),u(20),accent,self.muted,meter)
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(22),u(78),u(67),u(8),self.phase,meter,accent,glow,pal["muted"])
-            c.create_text(cx,u(87),text=status,fill=accent,font=("Segoe UI",max(5,int(u(6))),"bold"))
+            self._orb(c, u(66), u(66), u(64), panel_bg, border, state, live, meter)
+            self._draw_mic(c, u(66), u(54), u(21), state, muted, meter)
+            self._label(c, u(66), u(97), status, 6.5, state, "bold", "center", track=1)
+            self._label(c, u(66), u(114), f"{int(meter * 100)}%", 8, dim, "bold", "center")
 
         elif shape == 5:
-            self.rrect(c,u(1),u(1),u(82),self.H-u(1),u(13),fill=bg,outline=edge,width=1)
-            self.rrect(c,u(88),u(1),self.W-u(1),self.H-u(1),u(13),fill=bg,outline=edge,width=1)
-            self._draw_mic(c,u(27),u(32),u(19),accent,self.muted,meter)
-            c.create_text(u(54),u(23),text="MIC",anchor="w",fill=text,font=("Segoe UI",max(6,int(u(7))),"bold"))
-            c.create_text(u(54),u(38),text=status,anchor="w",fill=accent,font=("Segoe UI",max(5,int(u(6))),"bold"))
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(101),u(231),u(32),u(15),self.phase,meter,accent,glow,pal["muted"])
-            c.create_line(u(241),u(12),u(241),u(52),fill=edge,width=1)
-            c.create_text(u(263),u(29),text=f"{int(meter*100):02d}%",fill=accent,font=("Segoe UI",max(6,int(u(8))),"bold"))
+            self._panel(c, u(1), u(1), u(96), u(73), u(17), panel_bg, border)
+            self._panel(c, u(104), u(1), u(311), u(73), u(17), panel_bg, border)
+            self._draw_mic(c, u(31), u(36), u(17), state, muted, meter)
+            self._label(c, u(54), u(29), "MIC", 7, text, "bold")
+            self._label(c, u(54), u(42), status, 6, state, "bold")
+            self._wave_screen(c, u(116), u(12), u(246), u(62), panel_bg, border, state, live)
+            self.draw_wave(c, wave_style, u(128), u(234), u(37), u(22),
+                           self.phase, meter, state, glow, quiet)
+            c.create_line(u(257), u(18), u(257), u(56), fill=edge)
+            self._label(c, u(280), u(37), f"{int(meter * 100):02d}%", 12, state, "bold", "center")
 
         elif shape == 6:
-            self.rrect(c,u(1),u(1),self.W-u(1),self.H-u(1),u(16),fill=bg,outline=edge,width=1)
-            self._draw_mic(c,u(22),u(24),u(15),accent,self.muted,meter)
-            c.create_text(u(43),u(24),text="MIC",anchor="w",fill=text,font=("Segoe UI",max(5,int(u(7))),"bold"))
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(77),u(270),u(24),u(12),self.phase,meter,accent,glow,pal["muted"])
-            c.create_oval(u(288),u(20),u(294),u(26),fill=accent,outline="")
-            c.create_text(u(300),u(24),text=f"{int(meter*100):02d}",anchor="w",fill=MUTED_TEXT,font=("Segoe UI",max(5,int(u(6)))))
+            self._panel(c, u(1), u(1), u(347), u(57), u(19), panel_bg, border)
+            self._draw_mic(c, u(31), u(29), u(17), state, muted, meter)
+            self._label(c, u(55), u(24), "MIC", 8, text, "bold")
+            self._label(c, u(55), u(37), status, 6, state, "bold")
+            self._wave_screen(c, u(112), u(10), u(252), u(48), panel_bg, border, state, live)
+            self.draw_wave(c, wave_style, u(124), u(240), u(29), u(17),
+                           self.phase, meter, state, glow, quiet)
+            c.create_line(u(264), u(14), u(264), u(44), fill=edge)
+            self._label(c, u(296), u(29), f"{int(meter * 100):02d}", 14, state, "bold", "center")
+            self._label(c, u(311), u(31), "%", 6, dim, "normal", "w")
+            if tiny:
+                self._label(c, u(296), u(46), "LEVEL", 5.5, dim, "bold", "center", track=1)
 
         elif shape == 7:
-            cx,cy=u(62),u(55)
-            c.create_oval(u(2),u(2),self.W-u(2),self.H-u(2),fill=bg,outline=edge,width=1)
-            for r in (u(22),u(31),u(39)):
-                c.create_oval(cx-r,cy-r,cx+r,cy+r,outline="#2a3b4d",width=1)
-            self._draw_mic(c,cx,cy,u(18),accent,self.muted,meter)
-            if meter>.01:
-                angle=-self.phase*3.5
-                ex=cx+u(37)*math.cos(angle)
-                ey=cy+u(37)*math.sin(angle)
-                c.create_line(cx,cy,ex,ey,fill=accent,width=1.2)
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(25),u(99),u(99),u(7),self.phase,meter,accent,glow,pal["muted"])
-            c.create_text(cx,u(114),text=status,fill=accent,font=("Segoe UI",max(5,int(u(7))),"bold"))
+            self._orb(c, u(73), u(73), u(72), panel_bg, border, state, live, meter)
+            cx, cy = u(73), u(73)
+            ticks = 28
+            lit = max(0.0, min(1.0, meter)) * ticks
+            for i in range(ticks):
+                a = math.radians(-90 + i * 360.0 / ticks)
+                r0, r1 = u(54), u(66)
+                on = i < lit
+                col = state if on else blend_color(panel_bg, "#ffffff", 0.09)
+                c.create_line(cx + math.cos(a) * r0, cy + math.sin(a) * r0,
+                              cx + math.cos(a) * r1, cy + math.sin(a) * r1,
+                              fill=col, width=u(1.7) if on else u(1.1),
+                              capstyle=tk.ROUND)
+            self._draw_mic(c, cx, cy - u(2), u(20), state, muted, meter)
+            self._label(c, u(73), u(116), status, 6.5, state, "bold", "center", track=1)
 
         elif shape == 8:
-            self.rrect(c,u(1),u(7),self.W-u(1),u(31),u(11),fill=bg,outline=edge,width=1)
-            c.create_oval(u(10),u(15),u(18),u(23),fill=accent,outline="")
-            c.create_text(u(25),u(19),text="MIC",anchor="w",fill=text,font=("Segoe UI",max(5,int(u(6))),"bold"))
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(62),u(211),u(19),u(9),self.phase,meter,accent,glow,pal["muted"])
-            c.create_text(u(224),u(19),text=status,anchor="w",fill=accent,font=("Segoe UI",max(4,int(u(5))),"bold"))
+            self._panel(c, u(1), u(1), u(285), u(45), u(22), panel_bg, border)
+            self._draw_mic(c, u(25), u(22), u(15), state, muted, meter)
+            self._label(c, u(48), u(23), "MIC", 6.5, text, "bold", track=1)
+            self.draw_wave(c, wave_style, u(92), u(222), u(23), u(13),
+                           self.phase, meter, state, glow, quiet)
+            self._label(c, u(272), u(23), status, 6.5, state, "bold", "e")
 
         else:
-            self.rrect(c,u(1),u(1),self.W-u(1),self.H-u(1),u(12),fill=bg,outline=edge,width=1)
-            self._draw_mic(c,u(24),u(24),u(16),accent,self.muted,meter)
-            c.create_text(u(47),u(18),text="MIC INPUT",anchor="w",fill=text,font=("Segoe UI",max(5,int(u(7))),"bold"))
-            c.create_text(u(47),u(30),text=status,anchor="w",fill=accent,font=("Segoe UI",max(4,int(u(5))),"bold"))
-            c.create_text(u(211),u(24),text=f"{int(meter*100):02d}%",anchor="e",fill=accent,font=("Segoe UI",max(7,int(u(9))),"bold"))
-            c.create_line(u(10),u(44),u(226),u(44),fill=edge,width=1)
-            self.draw_wave(c,self.cfg.get("wave_style",0),u(12),u(224),u(64),u(14),self.phase,meter,accent,glow,pal["muted"])
+            self._panel(c, u(1), u(1), u(271), u(95), u(18), panel_bg, border)
+            self._draw_mic(c, u(35), u(32), u(18), state, muted, meter)
+            self._label(c, u(59), u(27), "MIC INPUT", 7, text, "bold")
+            if tiny:
+                self._label(c, u(59), u(40), "STRIP 01", 5.5, dim, "bold", "w", track=1)
+            self._label(c, u(218), u(31), f"{int(meter * 100):02d}", 15, state, "bold", "center")
+            self._label(c, u(233), u(33), "%", 6, dim, "normal", "w")
+            if tiny:
+                self._label(c, u(218), u(48), "LEVEL", 5.5, dim, "bold", "center", track=1)
+            c.create_line(u(12), u(58), u(260), u(58), fill=edge)
+            self._wave_screen(c, u(12), u(64), u(260), u(88), panel_bg, border, state, live)
+            self.draw_wave(c, wave_style, u(24), u(248), u(76), u(11),
+                           self.phase, meter, state, glow, quiet, pal["screen"])
+
+        c.flush()
 
     def animate(self):
         if self._toggle_req:
@@ -1173,169 +1516,324 @@ class MicHUD:
         if self.settings_win and self.settings_win.winfo_exists():
             self.settings_win.lift()
             return
+
+        ACCENT = self.colors.get("accent", "#64e6c0")
+        BG = "#0c131c"
+        CARD = "#121b26"
+        LINE = "#24313f"
+        TXT = "#e9f0f7"
+        SUB = "#8091a5"
+        FIELD = "#17222f"
+
         w = tk.Toplevel(self.root)
         self.settings_win = w
-        w.title("MicHUD · Design Studio v6.0")
-        w.configure(bg="#0e151f")
+        w.title("MicHUD · Design Studio")
+        w.configure(bg=BG)
         w.attributes("-topmost", True)
         w.resizable(False, False)
-        w.geometry("520x980")
+        w.option_add("*TCombobox*Listbox.background", FIELD)
+        w.option_add("*TCombobox*Listbox.foreground", TXT)
+        w.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        w.option_add("*TCombobox*Listbox.selectForeground", "#0b1219")
 
         style = ttk.Style(w)
         try:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        style.configure("HUD.TFrame", background="#0e151f")
-        style.configure("HUD.TLabel", background="#0e151f", foreground="#dce6f1", font=("Segoe UI", 9))
-        style.configure("HUD.Title.TLabel", background="#0e151f", foreground="#f0f5fb", font=("Segoe UI", 16, "bold"))
-        style.configure("HUD.Sub.TLabel", background="#0e151f", foreground="#8292a6", font=("Segoe UI", 8))
-        style.configure("HUD.TEntry", fieldbackground="#182433", foreground="#e8eef6", insertcolor="#e8eef6", bordercolor="#33465a", padding=6)
-        style.configure("HUD.TSpinbox", fieldbackground="#182433", foreground="#e8eef6", arrowsize=10, padding=5)
-        style.configure("HUD.TCombobox", fieldbackground="#182433", foreground="#e8eef6", arrowsize=12, padding=6)
-        style.configure("HUD.Horizontal.TScale", background="#0e151f", troughcolor="#26384b", bordercolor="#0e151f")
-        style.map("HUD.TCombobox", fieldbackground=[("readonly", "#182433")], foreground=[("readonly", "#e8eef6")])
-        style.configure("HUD.TButton", background="#26384b", foreground="#edf5fc", bordercolor="#3a4c61", padding=(12, 7), font=("Segoe UI", 8, "bold"))
-        style.map("HUD.TButton", background=[("active", "#344b63")])
-        style.configure("HUD.TCheckbutton", background="#0e151f", foreground="#dce6f1", font=("Segoe UI", 9))
-        style.map("HUD.TCheckbutton", background=[("active", "#0e151f")], foreground=[("active", "#ffffff")])
-        style.configure("HUD.TRadiobutton", background="#0e151f", foreground="#dce6f1", font=("Segoe UI", 9))
+        style.configure("S.TFrame", background=BG)
+        style.configure("Card.TFrame", background=CARD)
+        style.configure("L.TLabel", background=BG, foreground=TXT, font=("Segoe UI", 9))
+        style.configure("Sub.TLabel", background=BG, foreground=SUB, font=("Segoe UI", 8))
+        style.configure("Sec.TLabel", background=BG, foreground=SUB,
+                        font=("Segoe UI Semibold", 8))
+        style.configure("Mono.TLabel", background=BG, foreground=SUB, font=("Consolas", 8))
+        style.configure("S.TCombobox", fieldbackground=FIELD, background=CARD,
+                        foreground=TXT, arrowcolor=SUB, bordercolor=LINE,
+                        lightcolor=LINE, darkcolor=LINE, padding=(7, 5))
+        style.map("S.TCombobox",
+                  fieldbackground=[("readonly", FIELD)],
+                  foreground=[("readonly", TXT)],
+                  bordercolor=[("focus", ACCENT)])
+        style.configure("S.TEntry", fieldbackground=FIELD, foreground=TXT,
+                        insertcolor=TXT, bordercolor=LINE, lightcolor=LINE,
+                        darkcolor=LINE, padding=(7, 5))
+        style.configure("S.TSpinbox", fieldbackground=FIELD, foreground=TXT,
+                        arrowcolor=SUB, bordercolor=LINE, lightcolor=LINE,
+                        darkcolor=LINE, padding=(7, 4))
+        style.configure("S.TCheckbutton", background=BG, foreground=TXT,
+                        font=("Segoe UI", 9), focuscolor=BG)
+        style.map("S.TCheckbutton", background=[("active", BG)],
+                  foreground=[("active", TXT)])
 
-        canvas = tk.Canvas(w, bg="#0e151f", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(w, orient="vertical", command=canvas.yview)
-        scroll_frame = ttk.Frame(canvas, style="HUD.TFrame")
-        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        outer = tk.Frame(w, bg=BG)
+        outer.pack(fill="both", expand=True, padx=22, pady=18)
+        outer.columnconfigure(0, weight=0, minsize=404)
+        outer.columnconfigure(1, weight=1)
+        outer.rowconfigure(1, weight=1)
 
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        # ---------------- header ----------------
+        head = tk.Frame(outer, bg=BG)
+        head.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        tk.Label(head, text="MICHUD", bg=BG, fg=TXT, font=("Segoe UI Semibold", 17)).pack(side="left")
+        tk.Label(head, text="DESIGN STUDIO", bg=BG, fg=SUB,
+                 font=("Segoe UI Semibold", 9)).pack(side="left", padx=(10, 0), pady=(6, 0))
+        tk.Label(head, text=f"v{APP_VERSION}", bg=FIELD, fg=SUB,
+                 font=("Segoe UI Semibold", 8), padx=8, pady=3).pack(side="right")
 
-        f = scroll_frame
-        f.columnconfigure(0, weight=1)
-        f.columnconfigure(1, weight=1)
-        f.configure(padding=(18, 14, 18, 14))
+        # ---------------- left column ----------------
+        left = tk.Frame(outer, bg=BG)
+        left.grid(row=1, column=0, sticky="nsew", padx=(0, 18))
+        left.columnconfigure(1, weight=1)
 
-        ttk.Label(f, text="MIC HUD  /  DESIGN STUDIO v6.0", style="HUD.Title.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(f, text="✨ Voicemeeter + Windows Audio | 20 موجة | معاينة حية", style="HUD.Sub.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 10))
-        tk.Frame(f, bg="#29394b", height=1).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 9))
+        row = [0]
 
-        ttk.Label(f, text="00  /  AUDIO SOURCE", style="HUD.Sub.TLabel").grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 4))
+        def nxt(span=1):
+            row[0] += 1
+            return row[0] - 1
+
+        def section(title):
+            r = nxt()
+            tk.Frame(left, bg=LINE, height=1).grid(row=r, column=0, columnspan=2,
+                                                   sticky="ew", pady=(10, 0))
+            r = nxt()
+            tk.Label(left, text=title, bg=BG, fg=SUB,
+                     font=("Segoe UI Semibold", 8)).grid(row=r, column=0, columnspan=2,
+                                                         sticky="w", pady=(9, 6))
+
+        def field_row(label, widget):
+            r = nxt()
+            tk.Label(left, text=label, bg=BG, fg=TXT,
+                     font=("Segoe UI", 9)).grid(row=r, column=0, sticky="w", pady=4)
+            widget.grid(row=r, column=1, sticky="e", pady=4)
+
+        def segmented(options, variable):
+            frame = tk.Frame(left, bg=LINE, padx=1, pady=1)
+            buttons = {}
+
+            def select(value):
+                variable.set(value)
+                for key, btn in buttons.items():
+                    on = key == value
+                    btn.configure(bg=ACCENT if on else FIELD,
+                                  fg="#0b1219" if on else TXT)
+
+            for idx, (label, value) in enumerate(options):
+                b = tk.Button(frame, text=label, relief="flat", bd=0, cursor="hand2",
+                              font=("Segoe UI Semibold", 8), padx=13, pady=6,
+                              highlightthickness=0,
+                              command=lambda v=value: select(v))
+                b.pack(side="left", padx=(0 if idx == 0 else 1, 0))
+                buttons[value] = b
+            select(variable.get())
+            return frame
+
+        section("01 · AUDIO SOURCE")
         mode_var = tk.StringVar(value=self.cfg.get("mode", "voicemeeter"))
-        mode_frame = ttk.Frame(f, style="HUD.TFrame")
-        mode_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=3)
-        ttk.Radiobutton(mode_frame, text="🎛️ Voicemeeter Banana", variable=mode_var, value="voicemeeter",
-                        style="HUD.TRadiobutton").pack(side="left", padx=5)
-        ttk.Radiobutton(mode_frame, text="🎤 Windows Audio", variable=mode_var, value="windows",
-                        style="HUD.TRadiobutton").pack(side="left", padx=5)
+        src = segmented([("Voicemeeter", "voicemeeter"), ("Windows Audio", "windows")], mode_var)
+        r = nxt()
+        src.grid(row=r, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
-        # Device selection for Windows Audio
-        device_var = tk.StringVar()
-        device_box = None
-        if self.mode == "windows" and PYCAW_AVAILABLE:
-            devices = self.audio.get_devices_list()
-            if devices:
-                ttk.Label(f, text="اختر المايك:", style="HUD.TLabel").grid(row=5, column=0, sticky="w", pady=3)
-                device_var.set(devices[0] if devices else "")
-                device_box = ttk.Combobox(f, textvariable=device_var, values=devices, state="readonly", width=35, style="HUD.TCombobox")
-                device_box.grid(row=5, column=1, sticky="e", pady=3)
+        probe = self.audio if isinstance(self.audio, WindowsAudio) else WindowsAudio()
+        dev_names = probe.get_devices_list() if PYCAW_AVAILABLE else []
+        dev_ids = {d["name"]: d["id"] for d in getattr(probe, "devices", [])}
+        current_dev = next((n for n, i in dev_ids.items()
+                            if i == self.cfg.get("device_id", "")), None)
+        device_var = tk.StringVar(value=current_dev or (dev_names[0] if dev_names else ""))
+        if dev_names:
+            dev_box = ttk.Combobox(left, textvariable=device_var, values=dev_names,
+                                   state="readonly", style="S.TCombobox", width=24)
+            dev_label = tk.Label(left, text="Input device", bg=BG, fg=TXT, font=("Segoe UI", 9))
+            dev_row = nxt()
+            dev_label.grid(row=dev_row, column=0, sticky="w", pady=4)
+            dev_box.grid(row=dev_row, column=1, sticky="e", pady=4)
 
-        if not PYCAW_AVAILABLE:
-            ttk.Label(f, text="⚠️ pycaw غير مثبت - ثبّته بـ: pip install pycaw comtypes",
-                      style="HUD.Sub.TLabel", foreground="#ffbd70").grid(row=6, column=0, columnspan=2, sticky="w")
-            row_offset = 7
+            def sync_device_row(*_):
+                if mode_var.get() == "windows":
+                    dev_label.grid()
+                    dev_box.grid()
+                else:
+                    dev_label.grid_remove()
+                    dev_box.grid_remove()
+            sync_device_row()
+            mode_var.trace_add("write", sync_device_row)
         else:
-            row_offset = 6 if device_box else 6
+            dev_box = None
 
-        ttk.Label(f, text="Global hotkey", style="HUD.TLabel").grid(row=row_offset, column=0, sticky="w", pady=3)
         hk = tk.StringVar(value=self.cfg.get("hotkey", "t"))
-        ttk.Entry(f, textvariable=hk, width=19, style="HUD.TEntry").grid(row=row_offset, column=1, sticky="e", pady=3)
-
-        ttk.Label(f, text="Voicemeeter strip (0-4)", style="HUD.TLabel").grid(row=row_offset+1, column=0, sticky="w", pady=3)
+        field_row("Hotkey", ttk.Entry(left, textvariable=hk, width=14, style="S.TEntry"))
         st = tk.IntVar(value=self.cfg.get("strip", 0))
-        ttk.Spinbox(f, from_=0, to=4, textvariable=st, width=8, style="HUD.TSpinbox").grid(row=row_offset+1, column=1, sticky="e", pady=3)
+        field_row("Voicemeeter strip", ttk.Spinbox(left, from_=0, to=4, textvariable=st,
+                                                   width=6, style="S.TSpinbox"))
 
-        ttk.Label(f, text="Window opacity", style="HUD.TLabel").grid(row=row_offset+2, column=0, sticky="w", pady=3)
+        r = nxt()
+        op_row = tk.Frame(left, bg=BG)
+        op_row.grid(row=r, column=0, columnspan=2, sticky="ew", pady=4)
+        tk.Label(op_row, text="Opacity", bg=BG, fg=TXT, font=("Segoe UI", 9)).pack(side="left")
+        op_val = tk.Label(op_row, text=f"{int(round(float(self.cfg.get('opacity', .95)) * 100))}%",
+                          bg=BG, fg=ACCENT, font=("Segoe UI Semibold", 8), width=5, anchor="e")
+        op_val.pack(side="right")
         op = tk.DoubleVar(value=self.cfg.get("opacity", .95))
-        ttk.Scale(f, from_=.3, to=1.0, variable=op, length=170, style="HUD.Horizontal.TScale").grid(row=row_offset+2, column=1, sticky="e", pady=3)
+
+        slider = tk.Canvas(op_row, width=152, height=18, bg=BG,
+                           highlightthickness=0, bd=0, cursor="hand2")
+        slider.pack(side="right", padx=(0, 10))
+
+        def paint_slider(*_):
+            slider.delete("all")
+            v = max(0.0, min(1.0, (float(op.get()) - 0.3) / 0.7))
+            slider.create_line(5, 9, 147, 9, fill=LINE, width=4, capstyle=tk.ROUND)
+            slider.create_line(5, 9, 5 + 142 * v, 9, fill=ACCENT, width=4,
+                               capstyle=tk.ROUND)
+            slider.create_oval(5 + 142 * v - 5, 4, 5 + 142 * v + 5, 14,
+                               fill="#0b1219", outline=ACCENT, width=2)
+            op_val.configure(text=f"{int(round(float(op.get()) * 100))}%")
+
+        def slide(event):
+            op.set(round(0.3 + max(0.0, min(1.0, (event.x - 5) / 142)) * 0.7, 2))
+            paint_slider()
+
+        slider.bind("<Button-1>", slide)
+        slider.bind("<B1-Motion>", slide)
+        paint_slider()
 
         top = tk.BooleanVar(value=self.cfg.get("topmost", True))
-        ttk.Checkbutton(f, text="Keep HUD above other windows", variable=top, style="HUD.TCheckbutton").grid(row=row_offset+3, column=0, columnspan=2, sticky="w", pady=(2, 4))
+        r = nxt()
+        ttk.Checkbutton(left, text="Keep HUD above other windows", variable=top,
+                        style="S.TCheckbutton").grid(row=r, column=0, columnspan=2,
+                                                     sticky="w", pady=(6, 2))
 
-        ttk.Label(f, text="02  /  INTERFACE SHAPE", style="HUD.Sub.TLabel").grid(row=row_offset+4, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        section("02 · LOOK")
         shape_names = [item[0] for item in HUD_SHAPES]
         shape_var = tk.StringVar(value=shape_names[self.hud_shape])
-        shape_box = ttk.Combobox(f, textvariable=shape_var, values=shape_names, state="readonly", width=35, style="HUD.TCombobox")
-        shape_box.grid(row=row_offset+5, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        shape_box = ttk.Combobox(left, textvariable=shape_var, values=shape_names,
+                                 state="readonly", style="S.TCombobox", width=24)
+        field_row("Interface shape", shape_box)
 
-        ttk.Label(f, text="Interface size", style="HUD.TLabel").grid(row=row_offset+6, column=0, sticky="w", pady=3)
-        size_var = tk.StringVar(value={"small":"Small · 82%", "medium":"Medium · 100%", "large":"Large · 125%"}.get(self.hud_size, "Medium · 100%"))
-        size_box = ttk.Combobox(f, textvariable=size_var, values=list(SIZE_LABELS.keys()), state="readonly", width=21, style="HUD.TCombobox")
-        size_box.grid(row=row_offset+6, column=1, sticky="e", pady=3)
+        size_var = tk.StringVar(value={"small": "Small", "medium": "Medium",
+                                       "large": "Large"}.get(self.hud_size, "Medium"))
+        r = nxt()
+        tk.Label(left, text="Size", bg=BG, fg=TXT, font=("Segoe UI", 9)).grid(
+            row=r, column=0, sticky="w", pady=4)
+        segmented([("S", "Small"), ("M", "Medium"), ("L", "Large")], size_var).grid(
+            row=r, column=1, sticky="e", pady=4)
 
-        ttk.Label(f, text="03  /  WAVE ENGINE · 20 STYLES", style="HUD.Sub.TLabel").grid(row=row_offset+7, column=0, columnspan=2, sticky="w", pady=(6, 4))
+        section("03 · WAVE ENGINE")
         current = max(0, min(19, int(self.cfg.get("wave_style", 0))))
         wave_var = tk.StringVar(value=WAVE_NAMES[current])
-        wave_box = ttk.Combobox(f, textvariable=wave_var, values=WAVE_NAMES, state="readonly", width=35, style="HUD.TCombobox")
-        wave_box.grid(row=row_offset+8, column=0, columnspan=2, sticky="ew", pady=(0, 7))
+        wave_box = ttk.Combobox(left, textvariable=wave_var, values=WAVE_NAMES,
+                                state="readonly", style="S.TCombobox", width=24)
+        field_row("Spectrum style", wave_box)
 
-        preview = tk.Canvas(f, width=470, height=80, bg="#0a1219", highlightthickness=1, highlightbackground="#2c3e52")
-        preview.grid(row=row_offset+9, column=0, columnspan=2, sticky="ew")
-
+        section("04 · COLOR")
         color_vars = dict(self.colors)
         color_buttons = {}
-        preview_phase = [0.0]
+        color_specs = [("accent", "ACCENT"), ("glow", "GLOW"),
+                       ("background", "PANEL"), ("text", "TEXT")]
 
-        def draw_preview():
-            preview.delete("all")
-            preview.create_line(10, 40, 460, 40, fill="#1e2d3d", dash=(1, 6))
-            idx = WAVE_NAMES.index(wave_var.get()) if wave_var.get() in WAVE_NAMES else 0
-            self.draw_wave(preview, idx, 12, 458, 40, 26, preview_phase[0], 0.78,
-                           color_vars.get("accent", "#64e6c0"),
-                           color_vars.get("glow", "#c0ffed"), "#526174")
-
-        def animate_preview():
-            preview_phase[0] += 0.24
-            draw_preview()
-            if self.settings_win and self.settings_win.winfo_exists():
-                w.after(50, animate_preview)
-
-        wave_box.bind("<<ComboboxSelected>>", lambda e: draw_preview())
-        w.after(100, animate_preview)
-
-        ttk.Label(f, text="04  /  COLOR LAB", style="HUD.Sub.TLabel").grid(row=row_offset+10, column=0, columnspan=2, sticky="w", pady=(9, 4))
         preset_var = tk.StringVar(value="Custom")
-        preset_values = ["Custom"] + list(PALETTES.keys())
-        preset_box = ttk.Combobox(f, textvariable=preset_var, values=preset_values, state="readonly", width=22, style="HUD.TCombobox")
-        preset_box.grid(row=row_offset+11, column=0, columnspan=2, sticky="ew", pady=(0, 7))
-
-        color_labels = {"accent": "Accent", "glow": "Glow", "background": "Background", "text": "Text"}
+        preset_box = ttk.Combobox(left, textvariable=preset_var,
+                                  values=["Custom"] + list(PALETTES.keys()),
+                                  state="readonly", style="S.TCombobox", width=24)
+        field_row("Palette preset", preset_box)
 
         def refresh_color_button(key):
             color = color_vars.get(key, "#64e6c0")
-            color_buttons[key].configure(text=f"{color_labels[key]}   {color.upper()}", bg=color,
-                                         fg="#101820" if key != "background" else "#ffffff",
-                                         activebackground=color)
+            label = dict(color_specs)[key]
+            btn = color_buttons[key]
+            btn.configure(text=f"{label}   {color.upper()}",
+                          bg=color,
+                          fg="#0b1219" if key != "background" else "#ffffff",
+                          activebackground=color)
 
         def choose_color(key):
-            chosen = colorchooser.askcolor(color=color_vars[key], parent=w, title=f"Choose {key} color")
+            chosen = colorchooser.askcolor(color=color_vars[key], parent=w,
+                                           title=f"Choose {key} color")
             if chosen and chosen[1]:
                 color_vars[key] = chosen[1]
                 preset_var.set("Custom")
                 refresh_color_button(key)
                 draw_preview()
 
-        color_specs = [("accent", "Accent"), ("glow", "Glow"), ("background", "Background"), ("text", "Text")]
+        r = nxt()
+        grid_frame = tk.Frame(left, bg=BG)
+        grid_frame.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+        grid_frame.columnconfigure(0, weight=1)
+        grid_frame.columnconfigure(1, weight=1)
+
+        # ---------------- right column: live preview ----------------
+        right = tk.Frame(outer, bg=BG)
+        right.grid(row=1, column=1, sticky="nsew")
+        tk.Label(right, text="LIVE PREVIEW", bg=BG, fg=SUB,
+                 font=("Segoe UI Semibold", 8)).pack(anchor="w", pady=(0, 6))
+        holder = tk.Frame(right, bg=BG)
+        holder.pack(fill="both", expand=True)
+        stage = tk.Frame(holder, bg="#080d13", highlightthickness=1,
+                         highlightbackground=LINE)
+        stage.pack(fill="both", expand=True)
+        STAGE_W, STAGE_H = 388, 340
+        thumb = tk.Canvas(stage, width=STAGE_W, height=STAGE_H, bg="#080d13",
+                          highlightthickness=0, bd=0)
+        thumb.pack(fill="both", expand=True)
+        caption = tk.Label(right, text="", bg=BG, fg=SUB, font=("Segoe UI", 8),
+                           justify="left")
+        caption.pack(anchor="w", pady=(10, 0))
+        tk.Label(right, text="Drag to move   ·   Left click mutes   ·   Right click opens the menu",
+                 bg=BG, fg="#5b6b7d", font=("Segoe UI", 8)).pack(anchor="w", pady=(3, 0))
+
+        preview_phase = [self.phase]
+        state = {"busy": False, "surface": None}
+
+        def draw_preview(*_):
+            if state["busy"]:
+                return
+            state["busy"] = True
+            keep = (self.surface, self.colors, self.hud_shape, self.scale,
+                    self.W, self.H, self.muted, self.connected, self.level,
+                    self.cfg)
+            try:
+                idx = shape_names.index(shape_var.get()) if shape_var.get() in shape_names else 0
+                size_key = {"Small": "small", "Medium": "medium",
+                            "Large": "large"}.get(size_var.get(), "medium")
+                self.colors = dict(color_vars)
+                self.hud_shape = idx
+                self.muted = False
+                self.connected = True
+                self.level = 0.62
+                self.cfg = dict(self.cfg)
+                self.cfg["wave_style"] = (WAVE_NAMES.index(wave_var.get())
+                                          if wave_var.get() in WAVE_NAMES else 0)
+                wbox = max(STAGE_W, thumb.winfo_width())
+                hbox = max(220, thumb.winfo_height())
+                base = SIZE_FACTORS[size_key]
+                self.scale = 1.0
+                self._set_dimensions()
+                fit = min(1.7, (wbox - 80.0) / self.W, (hbox - 80.0) / self.H)
+                self.scale = base * fit
+                self._set_dimensions()
+                surf = state["surface"]
+                if surf is None or surf.w != int(wbox) or surf.h != int(hbox):
+                    surf = ImgPainter(thumb, wbox, hbox, ss=2, bg="#080d13")
+                    surf.base_draw = lambda q: q.dot_grid()
+                    state["surface"] = surf
+                surf.ox, surf.oy = (wbox - self.W) / 2, (hbox - self.H) / 2
+                self.surface = surf
+                self.draw()
+                caption.configure(
+                    text=f"{shape_names[idx]}   ·   {WAVE_NAMES[self.cfg['wave_style']]}"
+                         f"   ·   zoom {int(round(self.scale / base * 100))}%")
+            finally:
+                (self.surface, self.colors, self.hud_shape, self.scale,
+                 self.W, self.H, self.muted, self.connected, self.level,
+                 self.cfg) = keep
+                state["busy"] = False
+
         for i, (key, label) in enumerate(color_specs):
-            btn = tk.Button(f, text=f"{label}   {color_vars[key].upper()}",
-                            command=lambda k=key: choose_color(k), relief="flat", bd=0,
-                            padx=8, pady=5, font=("Segoe UI", 8, "bold"),
-                            cursor="hand2", width=20)
-            btn.grid(row=row_offset+12 + i // 2, column=i % 2, sticky="ew",
-                     padx=(0, 5) if i % 2 == 0 else (5, 0), pady=3)
+            btn = tk.Button(grid_frame, text="", relief="flat", bd=0, cursor="hand2",
+                            font=("Segoe UI Semibold", 8), pady=8, highlightthickness=0,
+                            command=lambda k=key: choose_color(k))
+            btn.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, 4) if i % 2 == 0 else (4, 0),
+                     pady=3)
             color_buttons[key] = btn
             refresh_color_button(key)
 
@@ -1348,23 +1846,37 @@ class MicHUD:
                 draw_preview()
         preset_box.bind("<<ComboboxSelected>>", choose_preset)
 
+        def tick():
+            if not (self.settings_win and self.settings_win.winfo_exists()):
+                return
+            preview_phase[0] += 0.24
+            self.phase = preview_phase[0]
+            draw_preview()
+            w.after(110, tick)
+
+        # ---------------- footer ----------------
+        r = nxt()
+        tk.Frame(left, bg=LINE, height=1).grid(row=r, column=0, columnspan=2,
+                                               sticky="ew", pady=(16, 12))
+
         def apply():
             try:
                 self.cfg["mode"] = mode_var.get()
                 self.cfg["hotkey"] = hk.get().strip().lower() or "t"
                 self.cfg["strip"] = max(0, min(4, int(st.get())))
                 self.cfg["opacity"] = round(float(op.get()), 2)
-                if device_box and device_var.get():
-                    devices = self.audio.get_devices_list()
-                    if device_var.get() in devices:
-                        idx = devices.index(device_var.get())
-                        self.cfg["device_id"] = self.audio.devices[idx]['id']
+                if mode_var.get() == "windows" and device_var.get():
+                    if device_var.get() in dev_ids:
+                        self.cfg["device_id"] = dev_ids[device_var.get()]
             except (ValueError, TypeError):
                 return
             self.cfg["topmost"] = bool(top.get())
-            self.cfg["wave_style"] = WAVE_NAMES.index(wave_var.get()) if wave_var.get() in WAVE_NAMES else 0
-            self.cfg["hud_shape"] = shape_names.index(shape_var.get()) if shape_var.get() in shape_names else 0
-            self.cfg["hud_size"] = SIZE_LABELS.get(size_var.get(), "medium")
+            self.cfg["wave_style"] = (WAVE_NAMES.index(wave_var.get())
+                                      if wave_var.get() in WAVE_NAMES else 0)
+            self.cfg["hud_shape"] = (shape_names.index(shape_var.get())
+                                     if shape_var.get() in shape_names else 0)
+            self.cfg["hud_size"] = {"Small": "small", "Medium": "medium",
+                                    "Large": "large"}.get(size_var.get(), "medium")
             self.colors = dict(color_vars)
             self.cfg["colors"] = self.colors
             self.hud_shape = self.cfg["hud_shape"]
@@ -1380,12 +1892,16 @@ class MicHUD:
                 else:
                     self.audio = WindowsAudio()
                     self.audio.set_device(self.cfg.get("device_id", ""))
+            elif self.mode == "windows" and hasattr(self.audio, "set_device"):
+                self.audio.set_device(self.cfg.get("device_id", ""))
 
             x, y = self.root.winfo_x(), self.root.winfo_y()
             self._set_dimensions()
             self.root.attributes("-alpha", self.cfg["opacity"])
             self.root.attributes("-topmost", self.cfg["topmost"])
             self.canvas.configure(width=self.W, height=self.H)
+            self.canvas.delete("all")
+            self.surface = ImgPainter(self.canvas, self.W, self.H, ss=SS_FACTOR)
             self.root.geometry(f"{self.W}x{self.H}+{x}+{y}")
             self.cfg["x"], self.cfg["y"] = x, y
             self.register_hotkey()
@@ -1393,16 +1909,36 @@ class MicHUD:
             self.draw()
             w.destroy()
 
-        update_row = row_offset + 13
-        ttk.Button(
-            f, text=f"Check for Updates  ·  v{APP_VERSION}",
-            command=self.check_for_updates, style="HUD.TButton"
-        ).grid(row=update_row, column=0, columnspan=2, sticky="ew", pady=(10, 2))
+        footer = tk.Frame(left, bg=BG)
+        footer.grid(row=row[0], column=0, columnspan=2, sticky="ew")
+        apply_btn = tk.Button(footer, text="Apply design", command=apply, relief="flat",
+                              bd=0, bg=ACCENT, fg="#0b1219", activebackground=ACCENT,
+                              activeforeground="#0b1219", cursor="hand2", padx=18, pady=9,
+                              font=("Segoe UI Semibold", 9), highlightthickness=0)
+        apply_btn.pack(side="right")
+        cancel_btn = tk.Button(footer, text="Cancel", command=w.destroy, relief="flat", bd=0,
+                               bg=FIELD, fg=TXT, activebackground=LINE, activeforeground=TXT,
+                               cursor="hand2", padx=18, pady=9,
+                               font=("Segoe UI Semibold", 9), highlightthickness=0)
+        cancel_btn.pack(side="right", padx=(0, 8))
+        updates = tk.Label(footer, text="Check for updates", bg=BG, fg=SUB,
+                           font=("Segoe UI", 8), cursor="hand2")
+        updates.pack(side="left")
+        updates.bind("<Button-1>", lambda e: self.check_for_updates())
 
-        buttons = ttk.Frame(f, style="HUD.TFrame")
-        buttons.grid(row=row_offset+15, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        ttk.Button(buttons, text="Cancel", command=w.destroy, style="HUD.TButton").pack(side="right", padx=(7, 0))
-        ttk.Button(buttons, text="Apply design", command=apply, style="HUD.TButton").pack(side="right")
+        # keep the two columns visually balanced
+        stage.configure(width=352, height=300)
+        w.update_idletasks()
+        h = max(580, left.winfo_reqheight() + 118, right.winfo_reqheight() + 96)
+        w.geometry(f"940x{min(int(h), 780)}")
+        w.update_idletasks()
+
+        shape_box.bind("<<ComboboxSelected>>", draw_preview)
+        wave_box.bind("<<ComboboxSelected>>", draw_preview)
+        for var in (shape_var, size_var):
+            var.trace_add("write", lambda *_: draw_preview())
+        w.after(60, draw_preview)
+        w.after(160, tick)
 
     def quit(self):
         save_config(self.cfg)
