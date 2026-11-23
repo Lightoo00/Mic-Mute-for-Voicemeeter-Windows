@@ -15,6 +15,7 @@ import time
 import threading
 import urllib.request
 import urllib.error
+import queue
 import subprocess
 import tempfile
 import zipfile
@@ -41,11 +42,16 @@ try:
 except ImportError:
     PYCAW_AVAILABLE = False
 
+try:
+    import pystray
+except ImportError:
+    pystray = None
+
 # ---------------------------------------------------------------------------
 # الإعدادات
 # ---------------------------------------------------------------------------
 APP_NAME = "Mic Mute for Voicemeeter & Windows"
-APP_VERSION = "6.2.1"
+APP_VERSION = "6.2.2"
 GITHUB_REPO = "Lightoo00/Mic-Mute-for-Voicemeeter-Windows"
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CONFIG_PATH = os.path.join(os.environ.get("APPDATA", "."), "MicHUD.json")
@@ -58,6 +64,12 @@ def resource_path(relative_path):
 
 DEFAULTS = {
     "hotkey": "t",
+    "hotkey_mode": "toggle",
+    "tray_menu": True,
+    "toast": True,
+    "auto_start": False,
+    "start_minimized": False,
+    "hud_hotkeys": True,
     "mode": "voicemeeter",
     "strip": 0,
     "device_id": "",
@@ -620,6 +632,8 @@ class MicHUD:
         self.hotkey_handle = None
         self.hotkey_hook_handle = None
         self._hotkey_down = False
+        self.hotkey_mode = "hold" if str(self.cfg.get("hotkey_mode", "toggle")) == "hold" else "toggle"
+        self._last_action_ts = 0.0
         self._native_hook = None
         self._native_hook_proc = None
         self._native_vk = 0
@@ -627,6 +641,11 @@ class MicHUD:
         self._moved = False
         self._frame = 0
         self._toggle_req = False
+        self._mute_req = False
+        self.tray = None
+        self._tray_queue = queue.Queue()
+        self._toast_win = None
+        self._hud_hidden = False
         self.settings_win = None
 
         self.colors = dict(DEFAULTS["colors"])
@@ -670,12 +689,21 @@ class MicHUD:
         self.menu.add_command(label="Check for Updates", command=self.check_for_updates)
         self.menu.add_command(label="Toggle Mute", command=self.toggle)
         self.menu.add_separator()
+        self.menu.add_command(label="Bigger", command=lambda: self._step_size(1))
+        self.menu.add_command(label="Smaller", command=lambda: self._step_size(-1))
+        self.menu.add_command(label="Next shape", command=self._cycle_shape)
+        self.menu.add_separator()
+        self.menu.add_command(label="Hide HUD", command=self._hide_hud)
         self.menu.add_command(label="Exit", command=self.quit)
 
         self.register_hotkey()
         self.root.after(4000, self._auto_update_check)
         self.sync_state()
         self.animate()
+        self._bind_hud_keys()
+        self._build_tray()
+        if bool(self.cfg.get("start_minimized", False)) and self.tray is not None:
+            self._hide_hud()
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
 
     def _fetch_latest_release(self):
@@ -799,6 +827,8 @@ class MicHUD:
             pass
         self.hotkey_handle = None
         self._hotkey_down = False
+        self._mute_req = False
+        self.hotkey_mode = "hold" if str(self.cfg.get("hotkey_mode", "toggle")) == "hold" else "toggle"
 
         key = str(self.cfg.get("hotkey", "t")).strip().lower() or "t"
 
@@ -811,7 +841,7 @@ class MicHUD:
             try:
                 self.hotkey_handle = keyboard.add_hotkey(
                     key,
-                    lambda: setattr(self, "_toggle_req", True),
+                    self._request_toggle,
                     suppress=False,
                     trigger_on_release=False,
                 )
@@ -848,9 +878,10 @@ class MicHUD:
                         if w_param in (0x0100, 0x0104):
                             if not self._hotkey_down:
                                 self._hotkey_down = True
-                                self._toggle_req = True
+                                self._hotkey_pressed()
                         elif w_param in (0x0101, 0x0105):
                             self._hotkey_down = False
+                            self._hotkey_released()
                 except Exception:
                     pass
             return user32.CallNextHookEx(self._native_hook, n_code, w_param, l_param)
@@ -859,15 +890,291 @@ class MicHUD:
         module = kernel32.GetModuleHandleW(None)
         self._native_hook = user32.SetWindowsHookExW(13, self._native_hook_proc, module, 0)
 
-    def toggle(self):
-        new_state = not self.muted
+    # ---- hotkey -------------------------------------------------------------
+    def _hotkey_pressed(self):
+        """Runs once per physical press; auto-repeat is filtered by the hook."""
+        if self.hotkey_mode == "hold":
+            if self.muted:
+                self._toggle_req = True
+            return
+        self._request_toggle()
+
+    def _hotkey_released(self):
+        """Only hold-to-talk reacts to the key going up."""
+        if self.hotkey_mode == "hold" and not self.muted:
+            self._mute_req = True
+
+    def _request_toggle(self):
+        # safety net: ignore a duplicate trigger that lands within 150 ms
+        now = time.perf_counter()
+        if now - self._last_action_ts < 0.15:
+            return
+        self._last_action_ts = now
+        self._toggle_req = True
+
+    def _log_action(self, kind):
+        try:
+            path = os.path.join(os.environ.get("APPDATA", "."), "MicHUD-actions.log")
+            if os.path.exists(path) and os.path.getsize(path) > 131072:
+                os.replace(path, path + ".1")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "  " + kind + "\n")
+        except Exception:
+            pass
+
+    def set_muted(self, new_state):
+        new_state = bool(new_state)
+        if new_state == self.muted:
+            return
         if self.mode == "voicemeeter":
-            if self.audio.set_mute(self.cfg["strip"], new_state):
-                self.muted = new_state
+            ok = self.audio.set_mute(self.cfg["strip"], new_state)
         else:
-            if self.audio.set_mute(new_state):
-                self.muted = new_state
+            ok = self.audio.set_mute(new_state)
+        if ok:
+            self.muted = new_state
+            self._log_action("muted" if new_state else "unmuted")
+            self.draw()
+            self._toast("Microphone muted" if new_state else "Microphone live", new_state)
+
+    def toggle(self):
+        self.set_muted(not self.muted)
+
+    # ---- HUD visibility -----------------------------------------------------
+    def _show_hud(self):
+        try:
+            self.root.deiconify()
+            self.root.attributes("-topmost", bool(self.cfg.get("topmost", True)))
+            self.root.lift()
+            self._hud_hidden = False
+        except Exception:
+            pass
+
+    def _hide_hud(self):
+        try:
+            self.root.withdraw()
+            self._hud_hidden = True
+        except Exception:
+            pass
+
+    # ---- in-HUD keys --------------------------------------------------------
+    def _bind_hud_keys(self):
+        try:
+            self.root.bind("<KeyPress>", self._on_hud_key)
+        except Exception:
+            pass
+
+    def _on_hud_key(self, event):
+        if not bool(self.cfg.get("hud_hotkeys", True)):
+            return
+        ch = (event.char or "").lower()
+        if ch in ("+", "="):
+            self._step_size(1)
+        elif ch in ("-", "_"):
+            self._step_size(-1)
+        elif ch == "s":
+            self._cycle_shape()
+
+    def _step_size(self, delta):
+        order = ["small", "medium", "large"]
+        idx = order.index(self.hud_size) if self.hud_size in order else 1
+        idx = max(0, min(len(order) - 1, idx + delta))
+        new_size = order[idx]
+        if new_size == self.hud_size:
+            return
+        self.hud_size = new_size
+        self.cfg["hud_size"] = new_size
+        self.scale = SIZE_FACTORS[new_size]
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        self._set_dimensions()
+        self.canvas.configure(width=self.W, height=self.H)
+        self.surface = ImgPainter(self.canvas, self.W, self.H, ss=SS_FACTOR)
+        self.root.geometry(f"{self.W}x{self.H}+{x}+{y}")
+        save_config(self.cfg)
         self.draw()
+
+    def _cycle_shape(self):
+        self.hud_shape = (self.hud_shape + 1) % len(HUD_SHAPES)
+        self.cfg["hud_shape"] = self.hud_shape
+        save_config(self.cfg)
+        self.draw()
+
+    # ---- tray icon ----------------------------------------------------------
+    def _tray_image(self):
+        try:
+            img = Image.open(resource_path(os.path.join("assets", "mic-mute.ico")))
+            return img.convert("RGBA").copy()
+        except Exception:
+            return Image.new("RGBA", (64, 64), (18, 24, 34, 255))
+
+    def _build_tray(self):
+        if pystray is None or self.tray is not None:
+            return
+        if not bool(self.cfg.get("tray_menu", True)):
+            return
+        try:
+            menu = pystray.Menu(
+                pystray.MenuItem("Mute / unmute mic",
+                                 lambda: self._tray_call(self.toggle), default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Hold to talk",
+                                 lambda: self._tray_call(self._toggle_hold_mode),
+                                 checked=lambda item: self.hotkey_mode == "hold"),
+                pystray.MenuItem("Show HUD", lambda: self._tray_call(self._show_hud)),
+                pystray.MenuItem("Settings...", lambda: self._tray_call(self.open_settings)),
+                pystray.MenuItem("Check for updates",
+                                 lambda: self._tray_call(self.check_for_updates)),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Exit", lambda: self._tray_call(self.quit)),
+            )
+            self.tray = pystray.Icon("MicMuteHUD", self._tray_image(), APP_NAME, menu)
+            self.tray.run_detached()
+        except Exception as exc:
+            print("Tray unavailable:", exc)
+            self.tray = None
+
+    def _stop_tray(self):
+        try:
+            if self.tray is not None:
+                self.tray.stop()
+        except Exception:
+            pass
+        self.tray = None
+
+    def _tray_call(self, fn):
+        try:
+            self._tray_queue.put(fn)
+        except Exception:
+            pass
+
+    def _drain_tray(self):
+        while True:
+            try:
+                fn = self._tray_queue.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                fn()
+            except Exception:
+                pass
+
+    def _toggle_hold_mode(self):
+        self.hotkey_mode = "toggle" if self.hotkey_mode == "hold" else "hold"
+        self.cfg["hotkey_mode"] = self.hotkey_mode
+        save_config(self.cfg)
+        self._toast("Hotkey: hold to talk" if self.hotkey_mode == "hold"
+                    else "Hotkey: press to toggle", False)
+
+    # ---- toast --------------------------------------------------------------
+    def _toast(self, text, muted):
+        if not bool(self.cfg.get("toast", True)):
+            return
+        try:
+            if self._toast_win is not None and self._toast_win.winfo_exists():
+                self._toast_win.destroy()
+        except Exception:
+            pass
+        try:
+            w, h = 216, 52
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+            x = sw - w - 22
+            y = sh - h - 70
+            win = tk.Toplevel(self.root)
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            win.attributes("-alpha", 0.0)
+            win.geometry(f"{w}x{h}+{x}+{y + 12}")
+            bg = "#1d1521" if muted else "#0f1c1a"
+            accent = RED if muted else self.colors.get("accent", "#64e6c0")
+            c = tk.Canvas(win, width=w, height=h, bg=bg, highlightthickness=0, bd=0)
+            c.pack()
+            c.create_rectangle(0, 0, 3, h, fill=accent, outline="")
+            c.create_polygon(_rr_pts(18, 13, 30, 31, 6, 6), fill="",
+                             outline=accent, width=2)
+            c.create_line(24, 31, 24, 38, fill=accent, width=2)
+            c.create_line(19, 38, 29, 38, fill=accent, width=2)
+            if muted:
+                c.create_line(15, 13, 33, 37, fill=RED, width=2)
+            c.create_text(42, h // 2, text=text, anchor="w", fill="#eef4f8",
+                          font=("Segoe UI Semibold", 10))
+            self._toast_win = win
+            alpha = {"v": 0.0}
+
+            def fade_in():
+                alpha["v"] = min(1.0, alpha["v"] + 0.16)
+                try:
+                    win.attributes("-alpha", alpha["v"])
+                    win.geometry(f"{w}x{h}+{x}+{y + int(12 * (1 - alpha['v']))}")
+                except Exception:
+                    return
+                if alpha["v"] < 1.0:
+                    win.after(16, fade_in)
+                else:
+                    win.after(1150, fade_out)
+
+            def fade_out():
+                alpha["v"] = max(0.0, alpha["v"] - 0.13)
+                try:
+                    if alpha["v"] <= 0.0:
+                        win.destroy()
+                        return
+                    win.attributes("-alpha", alpha["v"])
+                except Exception:
+                    return
+                win.after(16, fade_out)
+
+            win.lift()
+            fade_in()
+        except Exception:
+            pass
+
+    # ---- start with Windows -------------------------------------------------
+    def _autostart_command(self):
+        if getattr(sys, "frozen", False):
+            return '"' + sys.executable + '"'
+        script = os.path.abspath(__file__)
+        folder = os.path.dirname(sys.executable)
+        for name in ("pythonw.exe", "python.exe"):
+            candidate = os.path.join(folder, name)
+            if os.path.exists(candidate):
+                return '"' + candidate + '" "' + script + '"'
+        return '"' + sys.executable + '" "' + script + '"'
+
+    def _autostart_enabled(self):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run")
+            try:
+                winreg.QueryValueEx(key, "MicMuteHUD")
+                return True
+            except FileNotFoundError:
+                return False
+            finally:
+                winreg.CloseKey(key)
+        except Exception:
+            return False
+
+    def _set_autostart(self, enabled):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Run", 0,
+                                 winreg.KEY_SET_VALUE)
+            try:
+                if enabled:
+                    winreg.SetValueEx(key, "MicMuteHUD", 0, winreg.REG_SZ,
+                                      self._autostart_command())
+                else:
+                    try:
+                        winreg.DeleteValue(key, "MicMuteHUD")
+                    except FileNotFoundError:
+                        pass
+            finally:
+                winreg.CloseKey(key)
+            return True
+        except Exception as exc:
+            messagebox.showwarning(APP_NAME, "Could not change the Windows startup entry.\n\n"
+                                             + str(exc), parent=self.root)
+            return False
 
     def sync_state(self):
         if self.mode == "voicemeeter":
@@ -882,6 +1189,10 @@ class MicHUD:
         self.root.after(150, self.sync_state)
 
     def on_press(self, e):
+        try:
+            self.root.focus_force()
+        except Exception:
+            pass
         self._press = (e.x_root, e.y_root, self.root.winfo_x(), self.root.winfo_y())
         self._moved = False
 
@@ -903,6 +1214,10 @@ class MicHUD:
         self._press = None
 
     def on_right_click(self, e):
+        try:
+            self.root.focus_force()
+        except Exception:
+            pass
         try:
             self.menu.tk_popup(e.x_root, e.y_root)
         finally:
@@ -1534,9 +1849,13 @@ class MicHUD:
         c.flush()
 
     def animate(self):
+        self._drain_tray()
         if self._toggle_req:
             self._toggle_req = False
             self.toggle()
+        if self._mute_req:
+            self._mute_req = False
+            self.set_muted(True)
         self._frame += 1
         self.phase += 0.24
         target = 0.0
@@ -1605,6 +1924,12 @@ class MicHUD:
                         font=("Segoe UI", 9), focuscolor=BG)
         style.map("S.TCheckbutton", background=[("active", BG)],
                   foreground=[("active", TXT)])
+        style.configure("S.Vertical.TScrollbar", background=LINE, troughcolor=BG,
+                        bordercolor=BG, arrowcolor=SUB, darkcolor=LINE, lightcolor=LINE,
+                        gripcount=0, width=10)
+        style.map("S.Vertical.TScrollbar",
+                  background=[("active", ACCENT)],
+                  arrowcolor=[("active", TXT)])
 
         outer = tk.Frame(w, bg=BG)
         outer.pack(fill="both", expand=True, padx=22, pady=18)
@@ -1621,10 +1946,41 @@ class MicHUD:
         tk.Label(head, text=f"v{APP_VERSION}", bg=FIELD, fg=SUB,
                  font=("Segoe UI Semibold", 8), padx=8, pady=3).pack(side="right")
 
-        # ---------------- left column ----------------
-        left = tk.Frame(outer, bg=BG)
-        left.grid(row=1, column=0, sticky="nsew", padx=(0, 18))
+        # ---------------- left column (scrollable) ----------------
+        left_holder = tk.Frame(outer, bg=BG, width=404)
+        left_holder.grid(row=1, column=0, sticky="nsew", padx=(0, 18))
+        left_holder.grid_propagate(False)
+        left_scroll = ttk.Scrollbar(left_holder, orient="vertical",
+                                    style="S.Vertical.TScrollbar",
+                                    command=lambda *a: left_canvas.yview(*a))
+        left_scroll.pack(side="right", fill="y")
+        left_canvas = tk.Canvas(left_holder, bg=BG, highlightthickness=0, bd=0, width=392)
+        left_canvas.pack(side="left", fill="both", expand=True)
+        left_canvas.configure(yscrollcommand=left_scroll.set)
+        left = tk.Frame(left_canvas, bg=BG)
+        left_window = left_canvas.create_window((0, 0), window=left, anchor="nw")
         left.columnconfigure(1, weight=1)
+
+        def _sync_scroll(event=None):
+            if event is not None and getattr(event, "widget", None) is left_canvas:
+                left_canvas.itemconfigure(left_window, width=event.width)
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+            need = left.winfo_reqheight() > left_canvas.winfo_height() + 2
+            if need:
+                if not left_scroll.winfo_ismapped():
+                    left_scroll.pack(side="right", fill="y")
+            else:
+                if left_scroll.winfo_ismapped():
+                    left_scroll.pack_forget()
+                left_canvas.yview_moveto(0)
+
+        left.bind("<Configure>", lambda e: left_canvas.after_idle(_sync_scroll))
+        left_canvas.bind("<Configure>", _sync_scroll)
+
+        def _wheel(event):
+            if left.winfo_reqheight() > left_canvas.winfo_height() + 2:
+                left_canvas.yview_scroll(-1 * int(event.delta / 120), "units")
+        w.bind("<MouseWheel>", _wheel)
 
         row = [0]
 
@@ -1702,6 +2058,9 @@ class MicHUD:
 
         hk = tk.StringVar(value=self.cfg.get("hotkey", "t"))
         field_row("Hotkey", ttk.Entry(left, textvariable=hk, width=14, style="S.TEntry"))
+        hmode = tk.StringVar(value="hold" if self.hotkey_mode == "hold" else "toggle")
+        field_row("Hotkey action",
+                  segmented([("Press to toggle", "toggle"), ("Hold to talk", "hold")], hmode))
         st = tk.IntVar(value=self.cfg.get("strip", 0))
         field_row("Voicemeeter strip", ttk.Spinbox(left, from_=0, to=4, textvariable=st,
                                                    width=6, style="S.TSpinbox"))
@@ -1900,6 +2259,24 @@ class MicHUD:
             draw_preview()
             w.after(110, tick)
 
+        section("05 · SYSTEM")
+        tray_var = tk.BooleanVar(value=self.cfg.get("tray_menu", True))
+        toast_var = tk.BooleanVar(value=self.cfg.get("toast", True))
+        auto_var = tk.BooleanVar(value=self._autostart_enabled())
+        mini_var = tk.BooleanVar(value=self.cfg.get("start_minimized", False))
+        keys_var = tk.BooleanVar(value=self.cfg.get("hud_hotkeys", True))
+        for var, label in (
+            (tray_var, "Tray icon with quick menu"),
+            (toast_var, "Toast popup when muting"),
+            (auto_var, "Start with Windows"),
+            (mini_var, "Start minimized (tray only)"),
+            (keys_var, "HUD keys:  + / -  size,  S  shape"),
+        ):
+            r = nxt()
+            ttk.Checkbutton(left, text=label, variable=var,
+                            style="S.TCheckbutton").grid(row=r, column=0, columnspan=2,
+                                                          sticky="w", pady=(2, 2))
+
         # ---------------- footer ----------------
         r = nxt()
         tk.Frame(left, bg=LINE, height=1).grid(row=r, column=0, columnspan=2,
@@ -1909,6 +2286,7 @@ class MicHUD:
             try:
                 self.cfg["mode"] = mode_var.get()
                 self.cfg["hotkey"] = hk.get().strip().lower() or "t"
+                self.cfg["hotkey_mode"] = "hold" if hmode.get() == "hold" else "toggle"
                 self.cfg["strip"] = max(0, min(4, int(st.get())))
                 self.cfg["opacity"] = round(float(op.get()), 2)
                 if mode_var.get() == "windows" and device_var.get():
@@ -1918,6 +2296,18 @@ class MicHUD:
                 return
             self.cfg["topmost"] = bool(top.get())
             self.cfg["update_check"] = bool(upd.get())
+            self.cfg["tray_menu"] = bool(tray_var.get())
+            self.cfg["toast"] = bool(toast_var.get())
+            self.cfg["start_minimized"] = bool(mini_var.get())
+            self.cfg["hud_hotkeys"] = bool(keys_var.get())
+            want_auto = bool(auto_var.get())
+            if want_auto != self._autostart_enabled():
+                self._set_autostart(want_auto)
+            self.cfg["auto_start"] = want_auto
+            if self.cfg["tray_menu"]:
+                self._build_tray()
+            else:
+                self._stop_tray()
             self.cfg["wave_style"] = (WAVE_NAMES.index(wave_var.get())
                                       if wave_var.get() in WAVE_NAMES else 0)
             self.cfg["hud_shape"] = (shape_names.index(shape_var.get())
@@ -1956,8 +2346,8 @@ class MicHUD:
             self.draw()
             w.destroy()
 
-        footer = tk.Frame(left, bg=BG)
-        footer.grid(row=row[0], column=0, columnspan=2, sticky="ew")
+        footer = tk.Frame(outer, bg=BG)
+        footer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         apply_btn = tk.Button(footer, text="Apply design", command=apply, relief="flat",
                               bd=0, bg=ACCENT, fg="#0b1219", activebackground=ACCENT,
                               activeforeground="#0b1219", cursor="hand2", padx=18, pady=9,
@@ -1976,9 +2366,11 @@ class MicHUD:
         # keep the two columns visually balanced
         stage.configure(width=352, height=300)
         w.update_idletasks()
-        h = max(580, left.winfo_reqheight() + 118, right.winfo_reqheight() + 96)
-        w.geometry(f"940x{min(int(h), 780)}")
+        max_h = min(880, max(560, self.root.winfo_screenheight() - 110))
+        h = max(580, left.winfo_reqheight() + 150, right.winfo_reqheight() + 96)
+        w.geometry(f"940x{min(int(h), max_h)}")
         w.update_idletasks()
+        _sync_scroll()
 
         shape_box.bind("<<ComboboxSelected>>", draw_preview)
         wave_box.bind("<<ComboboxSelected>>", draw_preview)
@@ -2003,10 +2395,43 @@ class MicHUD:
         except Exception:
             pass
         self.audio.close()
+        self._stop_tray()
         self.root.destroy()
 
     def run(self):
         self.root.mainloop()
+
+
+def _claim_single_instance():
+    """A second copy would install a second global hotkey hook and fight the first."""
+    _claim_single_instance.handle = None
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        handle = kernel32.CreateMutexW(None, True, "Local\\MicHUD-single-instance")
+        if not handle:
+            return True
+        if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            return False
+        _claim_single_instance.handle = handle
+        return True
+    except Exception:
+        return True
+
+
+def _already_running_notice():
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.after(4500, root.destroy)
+        messagebox.showinfo(APP_NAME,
+                            "Mic Mute is already running." + "\n"
+                            + "Use the HUD window or the tray icon of the open copy.")
+        root.destroy()
+    except Exception:
+        pass
 
 
 def _log_crash():
@@ -2026,6 +2451,9 @@ def _log_crash():
 
 
 if __name__ == "__main__":
+    if not _claim_single_instance():
+        _already_running_notice()
+        sys.exit(0)
     try:
         MicHUD().run()
     except Exception:

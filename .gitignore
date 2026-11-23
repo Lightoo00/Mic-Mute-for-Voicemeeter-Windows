@@ -6,3 +6,4 @@ release/
 *.spec
 *.log
 publish-log.txt
+dev/

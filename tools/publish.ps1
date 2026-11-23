@@ -247,7 +247,20 @@ try {
             Fail "Tag $tag already exists. Choose a higher version number." ""
         }
     }
-    $tagResult = GitRun @("tag", "-a", $tag, "-m", "release $tag")
+    # sign the tag when a signing key is configured (github shows "Verified")
+    $signKey = (GitRun @("config", "user.signingkey")).Out
+    if ($signKey) {
+        $tagResult = GitRun @("tag", "-s", $tag, "-m", "release $tag")
+        if ($tagResult.Code -ne 0) {
+            Say "  signing failed - creating an unsigned tag instead" "Yellow"
+            GitRun @("tag", "-d", $tag) | Out-Null
+            $tagResult = GitRun @("tag", "-a", $tag, "-m", "release $tag")
+        } else {
+            Say "  tag signed with your key (will show Verified on GitHub)" "Green"
+        }
+    } else {
+        $tagResult = GitRun @("tag", "-a", $tag, "-m", "release $tag")
+    }
     if ($tagResult.Code -ne 0) { Fail "Could not create tag $tag." $tagResult.Out }
     $tagPush = GitRun @("push", "origin", $tag)
     if ($tagPush.Code -ne 0) { Fail "Pushing the tag failed." $tagPush.Out }

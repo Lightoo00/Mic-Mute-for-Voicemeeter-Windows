@@ -9,6 +9,19 @@ one click, or one tap on the widget.
 - Antialiased rendering (Pillow, 3× supersampled) — no pixelated edges
 - Voicemeeter Remote API **or** Windows Audio (pycaw)
 - Built-in updater: installed copies update themselves from GitHub Releases
+- Hotkey can be *press to toggle* or *hold to talk*, plus a tray menu, mute toast,
+  start with Windows and in-HUD keys (all optional, see Settings)
+
+## Settings at a glance
+
+| Option | What it does |
+| --- | --- |
+| Hotkey / Hotkey action | global key, and whether one press toggles or only talks while held |
+| Tray icon with quick menu | tray icon: mute, hold-to-talk, show HUD, settings, updates, exit |
+| Toast popup when muting | small animated popup bottom-right on every mute/unmute |
+| Start with Windows | adds a `MicMuteHUD` entry under `HKCU\...\CurrentVersion\Run` |
+| Start minimized (tray only) | the HUD stays hidden until Show HUD is used |
+| HUD keys | `+` / `-` change the size, `S` cycles the shape |
 
 ## Run from source
 
