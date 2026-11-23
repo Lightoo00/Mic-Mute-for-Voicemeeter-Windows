@@ -12,6 +12,26 @@ one click, or one tap on the widget.
 - Hotkey can be *press to toggle* or *hold to talk*, plus a tray menu, mute toast,
   start with Windows and in-HUD keys (all optional, see Settings)
 
+## Design
+
+- **5 full themes** — Aurora · Neon Cyber · Minimal Apple · Retro Pixel · Studio Hardware
+  (theme = colours + shape + wave + size, switchable from Settings, the HUD menu or the tray)
+- **Real FFT wave** (`21 · Live FFT`) — captures the microphone with `sounddevice`,
+  runs a 512-point FFT and draws the true spectrum (opt-in: *Use the real microphone spectrum*)
+- **Glass blur** behind the HUD (Windows acrylic, best effort)
+- **Entrance/exit fade**, optional fade-on-hover, mute overlay at the top of the screen
+- **Animated tray icon** that moves with the mic level
+- **Lock position** + per-monitor position memory (multi-monitor aware)
+- **Arabic / English** interface, diagnostics window with a one-click report, settings
+  export/import and a factory reset
+
+## Two builds
+
+| Asset | What it is |
+| --- | --- |
+| `Mic-Mute-Windows-vX.zip` | single-file EXE + updater — this is what the auto-updater installs |
+| `Mic-Mute-Fast-vX.zip` | folder build (`onedir`) — starts noticeably faster, install manually once |
+
 ## Settings at a glance
 
 | Option | What it does |

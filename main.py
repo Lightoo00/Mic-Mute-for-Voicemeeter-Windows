@@ -52,7 +52,7 @@ except ImportError:
 # الإعدادات
 # ---------------------------------------------------------------------------
 APP_NAME = "Mic Mute for Voicemeeter & Windows"
-APP_VERSION = "7.0.1"
+APP_VERSION = "7.0.2"
 GITHUB_REPO = "Lightoo00/Mic-Mute-for-Voicemeeter-Windows"
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CONFIG_PATH = os.path.join(os.environ.get("APPDATA", "."), "MicHUD.json")
@@ -77,6 +77,19 @@ DEFAULTS = {
     "voice_threshold": 0.03,
     "profiles": {},
     "active_profile": "Default",
+    "theme": "Aurora",
+    "language": "en",
+    "locked": False,
+    "positions": {},
+    "per_monitor_pos": True,
+    "hover_fade": False,
+    "hover_alpha": 0.35,
+    "overlay_top": False,
+    "animated_tray": True,
+    "glass": False,
+    "fft_audio": False,
+    "vm_target": "strip",
+    "vm_index": 0,
     "mode": "voicemeeter",
     "strip": 0,
     "device_id": "",
@@ -104,7 +117,7 @@ WAVE_NAMES = [
     "10 · Holographic", "11 · Cosmic Dust", "12 · Fire Waves",
     "13 · Ice Crystals", "14 · Sound Spectrum", "15 · Wave Rider",
     "16 · Neon Grid", "17 · Pulse Matrix", "18 · Star Field",
-    "19 · Energy Flow", "20 · Final Frontier",
+    "19 · Energy Flow", "20 · Final Frontier", "21 · Live FFT",
 ]
 
 HUD_SHAPES = [
@@ -134,6 +147,114 @@ PALETTES = {
     "Ice Rose": {"accent": "#f18bc8", "glow": "#ffd0ec", "background": "#211722", "text": "#ffeff8"},
     "Pure Mono": {"accent": "#dce6ef", "glow": "#ffffff", "background": "#151a20", "text": "#f4f7fb"},
 }
+
+# ---------------------------------------------------------------------------
+# Full themes (colour + motion presets)
+# ---------------------------------------------------------------------------
+THEMES = {
+    "Aurora": {
+        "colors": {"accent": "#64e6c0", "glow": "#c0ffed",
+                   "background": "#101923", "text": "#e7edf5"},
+        "wave_style": 8, "hud_size": "medium",
+    },
+    "Neon Cyber": {
+        "colors": {"accent": "#37f5ff", "glow": "#ff4bd8",
+                   "background": "#07080f", "text": "#e9f7ff"},
+        "wave_style": 14, "hud_shape": 5,
+    },
+    "Minimal Apple": {
+        "colors": {"accent": "#0a84ff", "glow": "#bfe0ff",
+                   "background": "#eef0f3", "text": "#191b1f"},
+        "wave_style": 2, "hud_shape": 9,
+    },
+    "Retro Pixel": {
+        "colors": {"accent": "#7dff9b", "glow": "#b6ffc8",
+                   "background": "#0c140e", "text": "#d9ffe3"},
+        "wave_style": 4,
+    },
+    "Studio Hardware": {
+        "colors": {"accent": "#ffb545", "glow": "#ffd9a0",
+                   "background": "#1b1c1e", "text": "#f2efe9"},
+        "wave_style": 11, "hud_shape": 1,
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Interface language
+# ---------------------------------------------------------------------------
+LANG = {
+    "en": {
+        "toggle": "Toggle mute", "hold": "Hold to talk", "tray": "Tray icon",
+        "settings": "Settings", "check_updates": "Check for updates", "exit": "Exit",
+        "show_hud": "Show HUD", "hide_hud": "Hide HUD", "bigger": "Bigger",
+        "smaller": "Smaller", "next_shape": "Next shape", "mute_for": "Mute for...",
+        "profiles": "Profiles", "locked": "Position locked", "unlocked": "Position unlocked",
+        "muted": "Microphone muted", "live": "Microphone live",
+        "disconnected": "Microphone disconnected", "reconnected": "Microphone reconnected",
+        "smart_on": "Smart mute - mic muted", "smart_call": "Call detected - mic live",
+        "audio": "Audio source", "look": "Look", "wave": "Wave engine", "color": "Colour",
+        "system": "System", "automation": "Automation", "profile": "Profiles",
+        "diagnostics": "Diagnostics", "apply": "Apply design", "cancel": "Cancel",
+        "copy_report": "Copy report", "language": "Language", "theme": "Theme",
+        "glass": "Glass blur behind the HUD", "hover_fade": "Fade while the mouse is over it",
+        "lock_pos": "Lock position", "per_monitor": "Remember position per monitor",
+        "overlay_top": "Mute overlay at the top of the screen",
+        "animated_tray": "Animate the tray icon with the mic level",
+        "fft": "Use the real microphone spectrum",
+    },
+    "ar": {
+        "toggle": "كتم/فتح", "hold": "اضغط للتحدث", "tray": "أيقونة التراي",
+        "settings": "الإعدادات", "check_updates": "فحص التحديثات", "exit": "خروج",
+        "show_hud": "إظهار النافذة", "hide_hud": "إخفاء النافذة", "bigger": "تكبير",
+        "smaller": "تصغير", "next_shape": "الشكل التالي", "mute_for": "كتم لمدة...",
+        "profiles": "البروفايلات", "locked": "تم قفل الموضع", "unlocked": "تم فتح الموضع",
+        "muted": "المايك مكتوم", "live": "المايك شغال",
+        "disconnected": "انفصل المايك", "reconnected": "رجع المايك",
+        "smart_on": "كتم ذكي - المايك مكتوم", "smart_call": "مكالمة - المايك شغال",
+        "audio": "مصدر الصوت", "look": "الشكل", "wave": "الموجة", "color": "الألوان",
+        "system": "النظام", "automation": "الأتمتة", "profile": "البروفايلات",
+        "diagnostics": "التشخيص", "apply": "تطبيق", "cancel": "إلغاء",
+        "copy_report": "نسخ التقرير", "language": "اللغة", "theme": "الثيم",
+        "glass": "تغبيش الخلفية خلف النافذة", "hover_fade": "شفافية عند مرور الماوس",
+        "lock_pos": "قفل الموضع", "per_monitor": "حفظ الموضع لكل شاشة",
+        "overlay_top": "شريط كتم أعلى الشاشة",
+        "animated_tray": "تحريك أيقونة التراي مع الصوت",
+        "fft": "استخدام طيف المايك الحقيقي",
+    },
+}
+
+
+def t(key, lang="en"):
+    return LANG.get(lang, LANG["en"]).get(key) or LANG["en"].get(key, key)
+
+
+# ---------------------------------------------------------------------------
+# Monitor helpers (per-monitor position, DPI aware)
+# ---------------------------------------------------------------------------
+class _MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong),
+                ("rcMonitor", ctypes.c_long * 4),
+                ("rcWork", ctypes.c_long * 4),
+                ("dwFlags", ctypes.c_ulong),
+                ("szDevice", ctypes.c_wchar * 32)]
+
+
+def monitor_key_at(x, y):
+    r"""Stable name of the monitor that contains (x, y), e.g. DISPLAY2."""
+    try:
+        user32 = ctypes.windll.user32
+        user32.MonitorFromPoint.restype = ctypes.c_void_p
+        pt = ctypes.c_long * 2
+        handle = user32.MonitorFromPoint(pt(int(x), int(y)), 2)  # nearest
+        if not handle:
+            return "default"
+        info = _MONITORINFOEXW()
+        info.cbSize = ctypes.sizeof(_MONITORINFOEXW)
+        if not user32.GetMonitorInfoW(ctypes.c_void_p(handle), ctypes.byref(info)):
+            return "default"
+        return str(info.szDevice) or "default"
+    except Exception:
+        return "default"
 
 
 def load_config():
@@ -167,6 +288,8 @@ class Voicemeeter:
         self.dll = None
         self.logged_in = False
         self._last_try = 0.0
+        self.kind = "?"
+        self.target = "strip"        # "strip" or "bus" (Banana / Potato)
 
     def _find_dir(self):
         key_path = r"VB:Voicemeeter {17359A74-1236-5467}"
@@ -195,6 +318,10 @@ class Voicemeeter:
         d.VBVMR_GetParameterFloat.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_float)]
         d.VBVMR_SetParameterFloat.argtypes = [ctypes.c_char_p, ctypes.c_float]
         d.VBVMR_GetLevel.argtypes = [ctypes.c_long, ctypes.c_long, ctypes.POINTER(ctypes.c_float)]
+        try:
+            d.VBVMR_GetVoicemeeterType.argtypes = [ctypes.POINTER(ctypes.c_long)]
+        except Exception:
+            pass
         self.dll = d
 
     def connect(self):
@@ -213,9 +340,22 @@ class Voicemeeter:
                 time.sleep(1.5)
                 res = self.dll.VBVMR_Login()
             self.logged_in = res >= 0
+            if self.logged_in:
+                self._detect_kind()
         except Exception:
             self.logged_in = False
         return self.logged_in
+
+    def _detect_kind(self):
+        try:
+            kind = ctypes.c_long()
+            if self.dll.VBVMR_GetVoicemeeterType(ctypes.byref(kind)) == 0:
+                self.kind = {1: "Voicemeeter", 2: "Banana", 3: "Potato"}.get(kind.value, "?")
+        except Exception:
+            pass
+
+    def _target_name(self):
+        return "Bus" if str(getattr(self, "target", "strip")) == "bus" else "Strip"
 
     def close(self):
         if self.dll and self.logged_in:
@@ -231,7 +371,8 @@ class Voicemeeter:
         try:
             self.dll.VBVMR_IsParametersDirty()
             v = ctypes.c_float()
-            r = self.dll.VBVMR_GetParameterFloat(f"Strip[{strip}].Mute".encode(), ctypes.byref(v))
+            r = self.dll.VBVMR_GetParameterFloat(
+                f"{self._target_name()}[{strip}].Mute".encode(), ctypes.byref(v))
             if r != 0:
                 self.logged_in = False
                 return None
@@ -245,7 +386,8 @@ class Voicemeeter:
             return False
         try:
             r = self.dll.VBVMR_SetParameterFloat(
-                f"Strip[{strip}].Mute".encode(), ctypes.c_float(1.0 if mute else 0.0)
+                f"{self._target_name()}[{strip}].Mute".encode(),
+                ctypes.c_float(1.0 if mute else 0.0)
             )
             return r == 0
         except Exception:
@@ -257,10 +399,17 @@ class Voicemeeter:
             return 0.0
         try:
             best = 0.0
-            for ch in (strip * 2, strip * 2 + 1):
-                v = ctypes.c_float()
-                if self.dll.VBVMR_GetLevel(0, ch, ctypes.byref(v)) == 0:
-                    best = max(best, v.value)
+            if str(getattr(self, "target", "strip")) == "bus":
+                # buses expose 8 channels each
+                for ch in range(8):
+                    v = ctypes.c_float()
+                    if self.dll.VBVMR_GetLevel(1, strip * 8 + ch, ctypes.byref(v)) == 0:
+                        best = max(best, v.value)
+            else:
+                for ch in (strip * 2, strip * 2 + 1):
+                    v = ctypes.c_float()
+                    if self.dll.VBVMR_GetLevel(0, ch, ctypes.byref(v)) == 0:
+                        best = max(best, v.value)
             return best
         except Exception:
             return 0.0
@@ -712,12 +861,121 @@ GRAY = "#8a96a8"
 MUTED_TEXT = "#8793a5"
 
 
+
+# ---------------------------------------------------------------------------
+# Real microphone spectrum (optional: pip install sounddevice)
+# ---------------------------------------------------------------------------
+def _fft(values):
+    """In-place iterative radix-2 FFT for a power-of-two length list."""
+    n = len(values)
+    a = list(values)
+    j = 0
+    for i in range(1, n):
+        bit = n >> 1
+        while j & bit:
+            j ^= bit
+            bit >>= 1
+        j |= bit
+        if i < j:
+            a[i], a[j] = a[j], a[i]
+    size = 2
+    while size <= n:
+        half = size >> 1
+        step = -2.0 * math.pi / size
+        twiddle = [complex(math.cos(step * k), math.sin(step * k)) for k in range(half)]
+        for start in range(0, n, size):
+            for k in range(half):
+                u = a[start + k]
+                v = a[start + k + half] * twiddle[k]
+                a[start + k] = u + v
+                a[start + k + half] = u - v
+        size <<= 1
+    return a
+
+
+class MicSpectrum:
+    """Captures the microphone and exposes a smoothed log-spaced spectrum."""
+
+    BINS = 24
+
+    def __init__(self, rate=16000, block=512):
+        self.rate = rate
+        self.block = block
+        self.available = False
+        self.error = ""
+        self.level = 0.0
+        self._bins = [0.0] * self.BINS
+        self._stream = None
+        self._lock = threading.Lock()
+        self._window = [0.5 - 0.5 * math.cos(2 * math.pi * i / (block - 1))
+                        for i in range(block)]
+
+    def start(self):
+        try:
+            import sounddevice as sd
+        except Exception as exc:
+            self.error = "sounddevice not installed: " + str(exc)
+            return False
+        try:
+            import struct
+
+            def callback(indata, frames, time_info, status):
+                try:
+                    samples = struct.unpack("<%df" % frames, bytes(indata))
+                except Exception:
+                    return
+                if len(samples) < self.block:
+                    return
+                chunk = samples[:self.block]
+                windowed = [chunk[i] * self._window[i] for i in range(self.block)]
+                spectrum = _fft(windowed)
+                energy = 0.0
+                for value in chunk:
+                    energy += value * value
+                rms = math.sqrt(energy / len(chunk))
+                mags = [abs(spectrum[i]) / (self.block / 2) for i in range(self.block // 2)]
+                bins = []
+                for b in range(self.BINS):
+                    lo = int((b / self.BINS) ** 2 * (len(mags) - 1))
+                    hi = max(lo + 1, int(((b + 1) / self.BINS) ** 2 * (len(mags) - 1)))
+                    peak = max(mags[lo:hi]) if hi > lo else 0.0
+                    bins.append(min(1.0, (peak * 6.0) ** 0.65))
+                with self._lock:
+                    self._bins = [old * 0.55 + new * 0.45
+                                  for old, new in zip(self._bins, bins)]
+                    self.level = min(1.0, rms * 9.0)
+                self.available = True
+
+            self._stream = sd.RawInputStream(samplerate=self.rate, blocksize=self.block,
+                                             channels=1, dtype="float32",
+                                             callback=callback)
+            self._stream.start()
+            return True
+        except Exception as exc:
+            self.error = str(exc)
+            return False
+
+    def bins(self):
+        with self._lock:
+            return list(self._bins)
+
+    def stop(self):
+        try:
+            if self._stream is not None:
+                self._stream.stop()
+                self._stream.close()
+        except Exception:
+            pass
+        self._stream = None
+
+
 class MicHUD:
     def __init__(self):
         self.cfg = load_config()
         self.mode = self.cfg.get("mode", "voicemeeter")
         if self.mode == "voicemeeter":
             self.audio = Voicemeeter()
+            self.audio.target = self.cfg.get("vm_target", "strip")
         else:
             self.audio = WindowsAudio()
             self.audio.set_device(self.cfg.get("device_id", ""))
@@ -750,6 +1008,13 @@ class MicHUD:
         self._device_check_at = 0.0
         self._device_alive = True
         self._manual_until = 0.0
+        self._hover = False
+        self._closing = False
+        self._tray_icon_at = 0.0
+        self._spectrum = None
+        self._spectrum_bins = []
+        self._spectrum_error = ""
+        self.lang = str(self.cfg.get("language", "en"))
         self.settings_win = None
 
         self.colors = dict(DEFAULTS["colors"])
@@ -790,6 +1055,7 @@ class MicHUD:
 
         self.menu = tk.Menu(self.root, tearoff=0)
         self.menu.add_command(label="Settings", command=self.open_settings)
+        self.menu.add_command(label="Diagnostics", command=self.show_diagnostics)
         self.menu.add_command(label="Check for Updates", command=self.check_for_updates)
         self.menu.add_command(label="Toggle Mute", command=self.toggle)
         self.menu.add_separator()
@@ -805,6 +1071,11 @@ class MicHUD:
         self.menu.add_cascade(label="Mute for...", menu=timer_menu)
         self._profile_menu = tk.Menu(self.menu, tearoff=0)
         self.menu.add_cascade(label="Profiles", menu=self._profile_menu)
+        self.menu.add_command(label="Lock / unlock position", command=self.toggle_lock)
+        lang_menu = tk.Menu(self.menu, tearoff=0)
+        lang_menu.add_command(label="English", command=lambda: self.set_language("en"))
+        lang_menu.add_command(label="العربية", command=lambda: self.set_language("ar"))
+        self.menu.add_cascade(label="Language", menu=lang_menu)
         self._refresh_profile_menu()
         self.menu.add_separator()
         self.menu.add_command(label="Hide HUD", command=self._hide_hud)
@@ -815,7 +1086,15 @@ class MicHUD:
         self.sync_state()
         self.animate()
         self._bind_hud_keys()
+        self.canvas.bind("<Enter>", self._on_enter)
+        self.canvas.bind("<Leave>", self._on_leave)
+        self._restore_position()
+        if bool(self.cfg.get("fft_audio", False)):
+            self._start_spectrum()
         self._build_tray()
+        if bool(self.cfg.get("glass", False)):
+            self._apply_glass()
+        self._intro_anim()
         if bool(self.cfg.get("start_minimized", False)) and self.tray is not None:
             self._hide_hud()
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
@@ -1004,6 +1283,359 @@ class MicHUD:
         module = kernel32.GetModuleHandleW(None)
         self._native_hook = user32.SetWindowsHookExW(13, self._native_hook_proc, module, 0)
 
+    # ---- language / theme ----------------------------------------------------
+    def tr(self, key):
+        return t(key, self.lang)
+
+    def apply_theme(self, name):
+        theme = THEMES.get(name)
+        if not theme:
+            return False
+        self.colors = dict(DEFAULTS["colors"])
+        self.colors.update(theme.get("colors", {}))
+        self.cfg["colors"] = dict(self.colors)
+        self.cfg["theme"] = name
+        if "wave_style" in theme:
+            self.cfg["wave_style"] = theme["wave_style"]
+        if "hud_shape" in theme:
+            self.cfg["hud_shape"] = theme["hud_shape"]
+            self.hud_shape = max(0, min(len(HUD_SHAPES) - 1, int(theme["hud_shape"])))
+        if "hud_size" in theme:
+            self.cfg["hud_size"] = theme["hud_size"]
+            self.hud_size = theme["hud_size"]
+            self.scale = SIZE_FACTORS.get(self.hud_size, 1.0)
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        self._set_dimensions()
+        self.canvas.configure(width=self.W, height=self.H)
+        self.surface = ImgPainter(self.canvas, self.W, self.H, ss=SS_FACTOR)
+        self.root.geometry(f"{self.W}x{self.H}+{x}+{y}")
+        save_config(self.cfg)
+        self.draw()
+        return True
+
+    def set_language(self, code):
+        self.lang = code if code in LANG else "en"
+        self.cfg["language"] = self.lang
+        save_config(self.cfg)
+        self._relabel_menus()
+        self._stop_tray()
+        self._build_tray()
+
+    def _relabel_menus(self):
+        labels = {0: "settings", 2: "check_updates", 3: "toggle", 5: "bigger",
+                  6: "smaller", 7: "next_shape", 11: "lock_pos", 14: "hide_hud",
+                  15: "exit"}
+        for index, key in labels.items():
+            try:
+                self.menu.entryconfigure(index, label=self.tr(key))
+            except tk.TclError:
+                pass
+        for index, key in ((9, "mute_for"), (10, "profiles")):
+            try:
+                self.menu.entryconfigure(index, label=self.tr(key))
+            except tk.TclError:
+                pass
+
+    def _intro_anim(self):
+        """Small scale + fade entrance instead of popping on screen."""
+        try:
+            if self._hud_hidden or bool(self.cfg.get("start_minimized", False)):
+                return
+            base = float(self.cfg.get("opacity", 0.95))
+            x, y = self.root.winfo_x(), self.root.winfo_y()
+            frames = {"i": 0}
+
+            def step():
+                frames["i"] += 1
+                t_ = min(1.0, frames["i"] / 9.0)
+                try:
+                    self.root.attributes("-alpha", max(0.05, base * t_))
+                    self.root.geometry(f"{self.W}x{self.H}+{x}+{int(y + 10 * (1 - t_))}")
+                except Exception:
+                    return
+                if frames["i"] < 9:
+                    self.root.after(18, step)
+            step()
+        except Exception:
+            pass
+
+    # ---- glass / acrylic -----------------------------------------------------
+    def _apply_glass(self):
+        """Acrylic blur behind the window (Windows 10/11, best effort)."""
+        try:
+            class ACCENTPOLICY(ctypes.Structure):
+                _fields_ = [("AccentState", ctypes.c_int), ("AccentFlags", ctypes.c_int),
+                            ("GradientColor", ctypes.c_uint), ("AnimationId", ctypes.c_int)]
+
+            class WINDOWCOMPOSITIONATTRIBDATA(ctypes.Structure):
+                _fields_ = [("Attribute", ctypes.c_int), ("Data", ctypes.c_void_p),
+                            ("SizeOfData", ctypes.c_size_t)]
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+            accent = ACCENTPOLICY()
+            enabled = bool(self.cfg.get("glass", False))
+            accent.AccentState = 4 if enabled else 0      # acrylic blur behind
+            accent.AccentFlags = 2 if enabled else 0
+            tint = hex_to_rgb(self.colors.get("background", "#101923"))
+            accent.GradientColor = (0x66 << 24) | (tint[2] << 16) | (tint[1] << 8) | tint[0]
+            data = WINDOWCOMPOSITIONATTRIBDATA()
+            data.Attribute = 19                            # WCA_ACCENT_POLICY
+            data.Data = ctypes.cast(ctypes.pointer(accent), ctypes.c_void_p)
+            data.SizeOfData = ctypes.sizeof(accent)
+            user32.SetWindowCompositionAttribute(ctypes.c_void_p(hwnd), ctypes.byref(data))
+            return True
+        except Exception:
+            return False
+
+    # ---- hover fade ----------------------------------------------------------
+    def _on_enter(self, _event=None):
+        self._hover = True
+
+    def _on_leave(self, _event=None):
+        self._hover = False
+
+    def _fade_step(self):
+        try:
+            base = float(self.cfg.get("opacity", 0.95))
+            if self._closing:
+                target = 0.0
+            elif self.cfg.get("hover_fade") and self._hover:
+                target = base * float(self.cfg.get("hover_alpha", 0.35))
+            else:
+                target = base
+            current = float(self.root.attributes("-alpha"))
+            step = (target - current) * 0.30
+            if abs(step) > 0.006:
+                self.root.attributes("-alpha", max(0.02, min(1.0, current + step)))
+            elif self._closing:
+                self.root.destroy()
+        except Exception:
+            pass
+
+    # ---- lock / positions ----------------------------------------------------
+    def toggle_lock(self):
+        self.cfg["locked"] = not bool(self.cfg.get("locked", False))
+        save_config(self.cfg)
+        self._toast(self.tr("locked") if self.cfg["locked"] else self.tr("unlocked"),
+                    self.muted)
+
+    def _save_position(self):
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        self.cfg["x"], self.cfg["y"] = x, y
+        if bool(self.cfg.get("per_monitor_pos", True)):
+            positions = dict(self.cfg.get("positions") or {})
+            positions[monitor_key_at(x + 20, y + 20)] = [x, y]
+            self.cfg["positions"] = positions
+        save_config(self.cfg)
+
+    def _restore_position(self):
+        if not bool(self.cfg.get("per_monitor_pos", True)):
+            return
+        positions = self.cfg.get("positions") or {}
+        if not positions:
+            return
+        try:
+            key = monitor_key_at(int(self.cfg.get("x", 0)) + 20,
+                                 int(self.cfg.get("y", 0)) + 20)
+            spot = positions.get(key)
+            if spot and len(spot) == 2:
+                self.cfg["x"], self.cfg["y"] = int(spot[0]), int(spot[1])
+                self.root.geometry(f"{self.W}x{self.H}+{spot[0]}+{spot[1]}")
+        except Exception:
+            pass
+
+    # ---- tray animation ------------------------------------------------------
+    def _tray_frame(self):
+        size = 64
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        accent = self.colors.get("accent", "#64e6c0")
+        stroke = RED if self.muted else accent
+        draw.rounded_rectangle((18, 6, 42, 32), radius=11, outline=stroke, width=4)
+        draw.line((30, 32, 30, 45), fill=stroke, width=4)
+        draw.line((20, 45, 40, 45), fill=stroke, width=4)
+        level = 0.0 if self.muted else max(0.0, min(1.0, self.level))
+        for i in range(3):
+            height = int(4 + 12 * max(0.0, level - i * 0.22))
+            draw.line((48 + i * 5, 54, 48 + i * 5, 54 - height), fill=stroke, width=3)
+        if self.muted:
+            draw.line((12, 8, 50, 50), fill=RED, width=4)
+        return img
+
+    def _tray_anim(self):
+        if self.tray is None or not bool(self.cfg.get("animated_tray", True)):
+            return
+        try:
+            self.tray.icon = self._tray_frame()
+        except Exception:
+            pass
+
+    # ---- real spectrum -------------------------------------------------------
+    def _start_spectrum(self):
+        if self._spectrum is not None:
+            return bool(getattr(self._spectrum, "available", False))
+        try:
+            spec = MicSpectrum()
+            if not spec.start():
+                self._spectrum_error = spec.error
+                self._spectrum = spec
+                return False
+            self._spectrum = spec
+            self._spectrum_error = ""
+            return True
+        except Exception as exc:
+            self._spectrum_error = str(exc)
+            return False
+
+    def _stop_spectrum(self):
+        try:
+            if self._spectrum is not None:
+                self._spectrum.stop()
+        except Exception:
+            pass
+        self._spectrum = None
+
+    # ---- diagnostics ---------------------------------------------------------
+    def diagnostics_text(self):
+        lines = []
+        add = lines.append
+        add("MIC MUTE - DIAGNOSTICS")
+        add("time          : " + time.strftime("%Y-%m-%d %H:%M:%S"))
+        add("version       : " + APP_VERSION)
+        add("frozen        : " + str(bool(getattr(sys, "frozen", False))))
+        add("python        : " + sys.version.split()[0])
+        add("tk            : " + str(tk.TkVersion))
+        add("config        : " + CONFIG_PATH)
+        add("")
+        add("mode          : " + self.mode)
+        add("target        : " + str(self.cfg.get("vm_target", "strip"))
+            + "[" + str(self.cfg.get("strip", 0)) + "]")
+        add("connected     : " + str(self.connected))
+        add("muted         : " + str(self.muted))
+        add("hotkey        : " + str(self.cfg.get("hotkey")) + " (" + self.hotkey_mode + ")")
+        add("native hook   : " + str(bool(self._native_hook)))
+        add("tray          : " + str(self.tray is not None))
+        add("")
+        if self.mode == "voicemeeter":
+            add("voicemeeter   : " + str(getattr(self.audio, "vm_dir", "?")))
+            add("logged in     : " + str(getattr(self.audio, "logged_in", False)))
+            add("kind          : " + str(getattr(self.audio, "kind", "?")))
+        else:
+            add("pycaw         : " + str(PYCAW_AVAILABLE))
+            add("devices       : " + str(len(getattr(self.audio, "devices", []))))
+            for dev in getattr(self.audio, "devices", [])[:8]:
+                add("   - " + str(dev.get("name")))
+            add("device alive  : " + str(self._device_alive))
+        add("")
+        add("spectrum      : " + str(self._spectrum is not None
+                                     and getattr(self._spectrum, "available", False)))
+        if getattr(self, "_spectrum_error", ""):
+            add("spectrum err  : " + str(self._spectrum_error))
+        add("mic users     : " + (", ".join(microphone_users()) or "none"))
+        add("")
+        add("-- last actions --")
+        try:
+            path = os.path.join(os.environ.get("APPDATA", "."), "MicHUD-actions.log")
+            with open(path, encoding="utf-8") as fh:
+                for line in fh.readlines()[-12:]:
+                    add(line.rstrip())
+        except Exception:
+            add("(no log yet)")
+        return "\n".join(lines)
+
+    def show_diagnostics(self):
+        win = tk.Toplevel(self.root)
+        win.title("MicHUD - Diagnostics")
+        win.configure(bg="#0c131c")
+        win.attributes("-topmost", True)
+        text = tk.Text(win, width=78, height=24, bg="#101923", fg="#dce6ef",
+                       insertbackground="#dce6ef", relief="flat",
+                       font=("Consolas", 9))
+        text.pack(fill="both", expand=True, padx=14, pady=(14, 8))
+        text.insert("1.0", self.diagnostics_text())
+        text.configure(state="disabled")
+
+        bar = tk.Frame(win, bg="#0c131c")
+        bar.pack(fill="x", padx=14, pady=(0, 14))
+        accent = self.colors.get("accent", "#64e6c0")
+
+        def copy_report():
+            try:
+                win.clipboard_clear()
+                win.clipboard_append(self.diagnostics_text())
+                copy_btn.configure(text="Copied")
+                win.after(1400, lambda: copy_btn.configure(text=self.tr("copy_report")))
+            except Exception:
+                pass
+
+        copy_btn = tk.Button(bar, text=self.tr("copy_report"), command=copy_report,
+                             relief="flat", bd=0, bg=accent, fg="#0b1219",
+                             font=("Segoe UI Semibold", 9), padx=16, pady=7,
+                             cursor="hand2", highlightthickness=0)
+        copy_btn.pack(side="right")
+        tk.Button(bar, text=self.tr("cancel"), command=win.destroy, relief="flat", bd=0,
+                  bg="#182230", fg="#dce6ef", font=("Segoe UI Semibold", 9),
+                  padx=16, pady=7, cursor="hand2", highlightthickness=0).pack(
+            side="right", padx=(0, 8))
+        tk.Button(bar, text="Open data folder", relief="flat", bd=0, bg="#182230",
+                  fg="#dce6ef", font=("Segoe UI Semibold", 9), padx=16, pady=7,
+                  cursor="hand2", highlightthickness=0,
+                  command=lambda: subprocess.Popen(
+                      ["explorer", os.environ.get("APPDATA", ".")])).pack(side="left")
+        win.geometry("680x520")
+        win.lift()
+
+    # ---- config export / import ---------------------------------------------
+    def export_config(self):
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(parent=self.root, defaultextension=".json",
+                                            initialfile="MicHUD-settings.json",
+                                            filetypes=[("JSON", "*.json")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(self.cfg, fh, indent=2, ensure_ascii=False)
+            self._toast("Settings exported", self.muted)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, "Export failed:\n" + str(exc))
+
+    def import_config(self):
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(parent=self.root, filetypes=[("JSON", "*.json")])
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                raise ValueError("not a settings file")
+            merged = dict(DEFAULTS)
+            merged.update(data)
+            save_config(merged)
+            messagebox.showinfo(APP_NAME, "Settings imported - the app will restart now.")
+            self.quit()
+            subprocess.Popen([sys.executable] if getattr(sys, "frozen", False)
+                             else [sys.executable, os.path.abspath(__file__)])
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, "Import failed:\n" + str(exc))
+
+    def factory_reset(self):
+        if not messagebox.askyesno(APP_NAME, "Reset every setting to the factory default?"):
+            return
+        try:
+            if os.path.exists(CONFIG_PATH):
+                os.replace(CONFIG_PATH, CONFIG_PATH + ".bak")
+        except Exception:
+            pass
+        self.quit()
+        try:
+            subprocess.Popen([sys.executable] if getattr(sys, "frozen", False)
+                             else [sys.executable, os.path.abspath(__file__)])
+        except Exception:
+            pass
+
     # ---- hotkey -------------------------------------------------------------
     def _refresh_profile_menu(self):
         menu = getattr(self, "_profile_menu", None)
@@ -1063,7 +1695,7 @@ class MicHUD:
             self.muted = new_state
             self._log_action("muted" if new_state else "unmuted")
             self.draw()
-            self._toast("Microphone muted" if new_state else "Microphone live", new_state)
+            self._toast(self.tr("muted") if new_state else self.tr("live"), new_state)
 
     def toggle(self):
         # a manual press always wins; automation stays out of the way for 90 s
@@ -1162,8 +1794,17 @@ class MicHUD:
                 )),
                 pystray.MenuItem("Profiles", pystray.Menu(
                     lambda: self._tray_profiles())),
+                pystray.MenuItem("Lock position", lambda: self._tray_call(self.toggle_lock),
+                                 checked=lambda item: bool(self.cfg.get("locked", False))),
                 pystray.MenuItem("Show HUD", lambda: self._tray_call(self._show_hud)),
                 pystray.MenuItem("Settings...", lambda: self._tray_call(self.open_settings)),
+                pystray.MenuItem("Diagnostics...", lambda: self._tray_call(self.show_diagnostics)),
+                pystray.MenuItem("Language", pystray.Menu(
+                    pystray.MenuItem("English",
+                                     lambda: self._tray_call(lambda: self.set_language("en"))),
+                    pystray.MenuItem("العربية",
+                                     lambda: self._tray_call(lambda: self.set_language("ar"))),
+                )),
                 pystray.MenuItem("Check for updates",
                                  lambda: self._tray_call(self.check_for_updates)),
                 pystray.Menu.SEPARATOR,
@@ -1228,13 +1869,19 @@ class MicHUD:
             w, h = 216, 52
             sw = self.root.winfo_screenwidth()
             sh = self.root.winfo_screenheight()
-            x = sw - w - 22
-            y = sh - h - 70
+            overlay = bool(self.cfg.get("overlay_top", False))
+            if overlay:
+                x = (sw - w) // 2
+                y = 26
+            else:
+                x = sw - w - 22
+                y = sh - h - 70
             win = tk.Toplevel(self.root)
             win.overrideredirect(True)
             win.attributes("-topmost", True)
             win.attributes("-alpha", 0.0)
-            win.geometry(f"{w}x{h}+{x}+{y + 12}")
+            shift = -12 if overlay else 12
+            win.geometry(f"{w}x{h}+{x}+{y - shift}")
             bg = "#1d1521" if muted else "#0f1c1a"
             accent = RED if muted else self.colors.get("accent", "#64e6c0")
             c = tk.Canvas(win, width=w, height=h, bg=bg, highlightthickness=0, bd=0)
@@ -1255,7 +1902,7 @@ class MicHUD:
                 alpha["v"] = min(1.0, alpha["v"] + 0.16)
                 try:
                     win.attributes("-alpha", alpha["v"])
-                    win.geometry(f"{w}x{h}+{x}+{y + int(12 * (1 - alpha['v']))}")
+                    win.geometry(f"{w}x{h}+{x}+{y - int(shift * (1 - alpha['v']))}")
                 except Exception:
                     return
                 if alpha["v"] < 1.0:
@@ -1348,7 +1995,7 @@ class MicHUD:
         self._moved = False
 
     def on_drag(self, e):
-        if not self._press:
+        if not self._press or bool(self.cfg.get("locked", False)):
             return
         dx, dy = e.x_root - self._press[0], e.y_root - self._press[1]
         if abs(dx) > 3 or abs(dy) > 3:
@@ -1358,8 +2005,7 @@ class MicHUD:
 
     def on_release(self, e):
         if self._moved:
-            self.cfg["x"], self.cfg["y"] = self.root.winfo_x(), self.root.winfo_y()
-            save_config(self.cfg)
+            self._save_position()
         else:
             self.toggle()
         self._press = None
@@ -1550,7 +2196,7 @@ class MicHUD:
 
     def draw_wave(self, canvas, style, x1, x2, mid, amp, phase, level,
                   accent, glow=None, quiet=None, bg=None):
-        style = max(0, min(19, int(style or 0)))
+        style = max(0, min(len(WAVE_NAMES) - 1, int(style or 0)))
         gain = max(0.0, min(1.0, float(level or 0.0)))
         glow = glow or "#c0ffed"
         quiet = quiet or "#526174"
@@ -1769,6 +2415,26 @@ class MicHUD:
                 c.create_oval(px - r * 2.0, py - r * 2.0, px + r * 2.0, py + r * 2.0,
                               fill=blend_color(bg, glow, 0.18), outline="")
                 c.create_oval(px - r, py - r, px + r, py + r, fill=glow, outline="")
+            return
+
+        # 21 · Live FFT · real microphone spectrum
+        if style == 20:
+            bins = list(self._spectrum_bins or [])
+            if not bins:
+                bins = [0.0] * 24
+            count = len(bins)
+            slot = width / count
+            for i, value in enumerate(bins):
+                height = max(0.02, value) * amp * 1.15
+                bx = x1 + slot * (i + 0.5)
+                c.create_line(bx, mid - height, bx, mid + height,
+                              fill=blend_color(bg, accent, 0.35 + 0.55 * value),
+                              width=max(1.3, slot * 0.5), capstyle=tk.ROUND)
+            pts = [(x1 + slot * (i + 0.5), mid - value * amp * 1.05)
+                   for i, value in enumerate(bins)]
+            if len(pts) > 2:
+                c.create_line(*self._flat(self._spline(pts)),
+                              fill=blend_color(accent, glow, 0.45), width=1.5)
             return
 
         # 19 · Final Frontier · layered traces + sparkles
@@ -2023,6 +2689,10 @@ class MicHUD:
             db = 20 * math.log10(raw + 1e-6)
             target = max(0.0, min(1.0, (db + 60.0) / 60.0))
         elif self.connected and self.muted and self.cfg.get("auto_unmute"):
+            spec = self._spectrum
+            spec_level = (min(1.0, spec.level * 2.4)
+                          if spec is not None and getattr(spec, "available", False)
+                          else 0.0)
             # voice activation has to listen while the output is muted
             try:
                 raw = (self.audio.get_level(self.cfg["strip"])
@@ -2031,6 +2701,8 @@ class MicHUD:
                 probe = max(0.0, min(1.0, (db + 60.0) / 60.0))
             except Exception:
                 probe = 0.0
+            if spec_level:
+                probe = max(probe, spec_level)
             threshold = float(self.cfg.get("voice_threshold", 0.03))
             if self.hotkey_mode != "hold" and probe >= threshold:
                 self._voice_hits += 1
@@ -2039,8 +2711,17 @@ class MicHUD:
                     self.set_muted(False)
             else:
                 self._voice_hits = 0
+        spec = self._spectrum
+        spec_ok = spec is not None and getattr(spec, "available", False)
+        if spec_ok:
+            self._spectrum_bins = spec.bins()
+            if not self.muted:
+                target = max(target, min(1.0, spec.level * 2.4))
         smoothing = 0.42 if target > self.level else 0.20
         self.level += (target - self.level) * smoothing
+        if self._frame % 5 == 0:
+            self._tray_anim()
+        self._fade_step()
         self.draw()
         self.root.after(33, self.animate)
 
@@ -2072,10 +2753,10 @@ class MicHUD:
                     self._smart_streak = 0
                     if active and self.muted:
                         self.set_muted(False)
-                        self._toast("Call detected - mic live", False)
+                        self._toast(self.tr("smart_call"), False)
                     elif not active and not self.muted:
                         self.set_muted(True)
-                        self._toast("Smart mute - mic muted", True)
+                        self._toast(self.tr("smart_on"), True)
         # windows device watchdog
         if self.mode == "windows" and now - self._device_check_at > 3.0:
             self._device_check_at = now
@@ -2085,10 +2766,10 @@ class MicHUD:
                 alive = True
             if self._device_alive and not alive:
                 self._device_alive = False
-                self._toast("Microphone disconnected", True)
+                self._toast(self.tr("disconnected"), True)
             elif not self._device_alive and alive:
                 self._device_alive = True
-                self._toast("Microphone reconnected", False)
+                self._toast(self.tr("reconnected"), False)
 
     def start_mute_timer(self, seconds):
         seconds = max(5, int(seconds))
@@ -2349,8 +3030,11 @@ class MicHUD:
         hmode = tk.StringVar(value="hold" if self.hotkey_mode == "hold" else "toggle")
         field_row("Hotkey action",
                   segmented([("Press to toggle", "toggle"), ("Hold to talk", "hold")], hmode))
+        vm_target_var = tk.StringVar(value=str(self.cfg.get("vm_target", "strip")))
+        field_row("Voicemeeter target",
+                  segmented([("Strip", "strip"), ("Bus", "bus")], vm_target_var))
         st = tk.IntVar(value=self.cfg.get("strip", 0))
-        field_row("Voicemeeter strip", ttk.Spinbox(left, from_=0, to=4, textvariable=st,
+        field_row("Index (0-7)", ttk.Spinbox(left, from_=0, to=7, textvariable=st,
                                                    width=6, style="S.TSpinbox"))
 
         r = nxt()
@@ -2412,11 +3096,36 @@ class MicHUD:
             row=r, column=1, sticky="e", pady=4)
 
         section("03 · WAVE ENGINE")
-        current = max(0, min(19, int(self.cfg.get("wave_style", 0))))
+        current = max(0, min(len(WAVE_NAMES) - 1, int(self.cfg.get("wave_style", 0))))
         wave_var = tk.StringVar(value=WAVE_NAMES[current])
         wave_box = ttk.Combobox(left, textvariable=wave_var, values=WAVE_NAMES,
                                 state="readonly", style="S.TCombobox", width=24)
         field_row("Spectrum style", wave_box)
+
+        theme_var = tk.StringVar(
+            value=self.cfg.get("theme", "Aurora") if self.cfg.get("theme") in THEMES else "Custom")
+        theme_box = ttk.Combobox(left, textvariable=theme_var,
+                                 values=["Custom"] + list(THEMES.keys()),
+                                 state="readonly", style="S.TCombobox", width=24)
+        field_row("Theme", theme_box)
+
+        def choose_theme(_event=None):
+            theme = THEMES.get(theme_var.get())
+            if not theme:
+                return
+            color_vars.update(theme.get("colors", {}))
+            for key, _label in color_specs:
+                refresh_color_button(key)
+            if "wave_style" in theme:
+                wave_var.set(WAVE_NAMES[theme["wave_style"]])
+            if "hud_shape" in theme:
+                shape_var.set(shape_names[theme["hud_shape"]])
+            if "hud_size" in theme:
+                size_var.set(theme["hud_size"].capitalize())
+            preset_var.set("Custom")
+            draw_preview()
+
+        theme_box.bind("<<ComboboxSelected>>", choose_theme)
 
         section("04 · COLOR")
         color_vars = dict(self.colors)
@@ -2553,17 +3262,48 @@ class MicHUD:
         auto_var = tk.BooleanVar(value=self._autostart_enabled())
         mini_var = tk.BooleanVar(value=self.cfg.get("start_minimized", False))
         keys_var = tk.BooleanVar(value=self.cfg.get("hud_hotkeys", True))
+        fttray_var = tk.BooleanVar(value=self.cfg.get("animated_tray", True))
+        overlay_var = tk.BooleanVar(value=self.cfg.get("overlay_top", False))
+        hover_var = tk.BooleanVar(value=self.cfg.get("hover_fade", False))
+        lock_var = tk.BooleanVar(value=self.cfg.get("locked", False))
+        mon_var = tk.BooleanVar(value=self.cfg.get("per_monitor_pos", True))
+        glass_var = tk.BooleanVar(value=self.cfg.get("glass", False))
+        fft_var = tk.BooleanVar(value=self.cfg.get("fft_audio", False))
         for var, label in (
             (tray_var, "Tray icon with quick menu"),
             (toast_var, "Toast popup when muting"),
             (auto_var, "Start with Windows"),
             (mini_var, "Start minimized (tray only)"),
             (keys_var, "HUD keys:  + / -  size,  S  shape"),
+            (fttray_var, "Animate the tray icon with the mic level"),
+            (overlay_var, "Mute overlay at the top of the screen"),
+            (hover_var, "Fade while the mouse is over it"),
+            (lock_var, "Lock position (no dragging)"),
+            (mon_var, "Remember position per monitor"),
+            (glass_var, "Glass blur behind the HUD (experimental)"),
+            (fft_var, "Use the real microphone spectrum"),
         ):
             r = nxt()
             ttk.Checkbutton(left, text=label, variable=var,
                             style="S.TCheckbutton").grid(row=r, column=0, columnspan=2,
                                                           sticky="w", pady=(2, 2))
+
+        lang_var = tk.StringVar(value="العربية" if self.cfg.get("language") == "ar" else "English")
+        field_row("Language", ttk.Combobox(left, textvariable=lang_var,
+                                           values=["English", "العربية"], state="readonly",
+                                           style="S.TCombobox", width=12))
+        tools = tk.Frame(left, bg=BG)
+        r = nxt()
+        tools.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+        for text, cmd in (("Diagnostics", self.show_diagnostics),
+                          ("Export", self.export_config),
+                          ("Import", self.import_config),
+                          ("Reset", self.factory_reset)):
+            tk.Button(tools, text=text, command=cmd, relief="flat", bd=0, bg=FIELD,
+                      fg=TXT, activebackground=LINE, activeforeground=TXT,
+                      cursor="hand2", padx=10, pady=5,
+                      font=("Segoe UI Semibold", 8), highlightthickness=0).pack(
+                side="left", padx=(0, 6))
 
         section("06 · AUTOMATION")
         smart_var = tk.BooleanVar(value=self.cfg.get("smart_mute", False))
@@ -2635,7 +3375,8 @@ class MicHUD:
                 self.cfg["mode"] = mode_var.get()
                 self.cfg["hotkey"] = hk.get().strip().lower() or "t"
                 self.cfg["hotkey_mode"] = "hold" if hmode.get() == "hold" else "toggle"
-                self.cfg["strip"] = max(0, min(4, int(st.get())))
+                self.cfg["strip"] = max(0, min(7, int(st.get())))
+                self.cfg["vm_target"] = vm_target_var.get()
                 self.cfg["opacity"] = round(float(op.get()), 2)
                 if mode_var.get() == "windows" and device_var.get():
                     if device_var.get() in dev_ids:
@@ -2648,6 +3389,15 @@ class MicHUD:
             self.cfg["toast"] = bool(toast_var.get())
             self.cfg["start_minimized"] = bool(mini_var.get())
             self.cfg["hud_hotkeys"] = bool(keys_var.get())
+            self.cfg["animated_tray"] = bool(fttray_var.get())
+            self.cfg["overlay_top"] = bool(overlay_var.get())
+            self.cfg["hover_fade"] = bool(hover_var.get())
+            self.cfg["locked"] = bool(lock_var.get())
+            self.cfg["per_monitor_pos"] = bool(mon_var.get())
+            self.cfg["glass"] = bool(glass_var.get())
+            self.cfg["fft_audio"] = bool(fft_var.get())
+            self.cfg["theme"] = theme_var.get() if theme_var.get() in THEMES else "Custom"
+            self.cfg["language"] = "ar" if lang_var.get() == "العربية" else "en"
             self.cfg["smart_mute"] = bool(smart_var.get())
             self.cfg["smart_apps"] = apps_var.get().strip()
             self.cfg["auto_unmute"] = bool(voice_var.get())
@@ -2663,6 +3413,12 @@ class MicHUD:
                 self._build_tray()
             else:
                 self._stop_tray()
+            self.lang = self.cfg["language"]
+            if self.cfg["fft_audio"]:
+                self._start_spectrum()
+            else:
+                self._stop_spectrum()
+            self._apply_glass()
             self.cfg["wave_style"] = (WAVE_NAMES.index(wave_var.get())
                                       if wave_var.get() in WAVE_NAMES else 0)
             self.cfg["hud_shape"] = (shape_names.index(shape_var.get())
@@ -2681,9 +3437,15 @@ class MicHUD:
                 self.mode = new_mode
                 if new_mode == "voicemeeter":
                     self.audio = Voicemeeter()
+                    self.audio.target = self.cfg.get("vm_target", "strip")
                 else:
                     self.audio = WindowsAudio()
                     self.audio.set_device(self.cfg.get("device_id", ""))
+            elif self.mode == "voicemeeter":
+                try:
+                    self.audio.target = self.cfg.get("vm_target", "strip")
+                except Exception:
+                    pass
             elif self.mode == "windows" and hasattr(self.audio, "set_device"):
                 self.audio.set_device(self.cfg.get("device_id", ""))
 
@@ -2735,6 +3497,18 @@ class MicHUD:
         w.after(160, tick)
 
     def quit(self):
+        if self._closing:
+            return
+        self._closing = True
+        self._save_position()
+        try:
+            self.root.after(240, self._finish_quit)
+            return
+        except Exception:
+            pass
+        self._finish_quit()
+
+    def _finish_quit(self):
         save_config(self.cfg)
         try:
             if keyboard is not None:
@@ -2751,7 +3525,11 @@ class MicHUD:
             pass
         self.audio.close()
         self._stop_tray()
-        self.root.destroy()
+        self._stop_spectrum()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def run(self):
         self.root.mainloop()
