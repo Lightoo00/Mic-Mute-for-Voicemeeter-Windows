@@ -23,7 +23,7 @@ if errorlevel 1 (
 mkdir release 2>nul
 copy /Y "dist\Mic Mute for Voicemeeter & Windows.exe" "release\Mic Mute for Voicemeeter & Windows.exe"
 copy /Y "dist\MicMuteUpdater.exe" "release\MicMuteUpdater.exe"
-powershell -NoProfile -Command "Compress-Archive -Path 'release\*' -DestinationPath 'Mic-Mute-Windows-v6.2.2.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'release\*' -DestinationPath 'Mic-Mute-Windows-v7.0.1.zip' -Force"
 echo.
-echo Build complete: Mic-Mute-Windows-v6.2.2.zip
+echo Build complete: Mic-Mute-Windows-v7.0.1.zip
 pause

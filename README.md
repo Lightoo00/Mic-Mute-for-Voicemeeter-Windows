@@ -22,6 +22,13 @@ one click, or one tap on the widget.
 | Start with Windows | adds a `MicMuteHUD` entry under `HKCU\...\CurrentVersion\Run` |
 | Start minimized (tray only) | the HUD stays hidden until Show HUD is used |
 | HUD keys | `+` / `-` change the size, `S` cycles the shape |
+| Smart mute | stays muted unless Discord/Teams/Zoom/... is using the mic (Windows capability store) |
+| Call apps | comma separated list that Smart mute watches |
+| Auto-unmute when you start talking | unmutes as soon as your voice passes the threshold |
+| Profile | save a whole look + hotkey preset and apply it from the HUD, tray or settings |
+
+Temporary mute lives in the HUD/tray menu (`Mute for...` 30 s → 15 min); the HUD shows
+a live countdown and the mic returns by itself.
 
 ## Run from source
 

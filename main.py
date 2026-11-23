@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import zipfile
 import tkinter as tk
-from tkinter import ttk, colorchooser, messagebox
+from tkinter import ttk, colorchooser, messagebox, simpledialog
 
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
@@ -37,6 +37,7 @@ except ImportError:
 
 try:
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+    from pycaw.constants import EDataFlow, DEVICE_STATE
     from comtypes import CLSCTX_ALL
     PYCAW_AVAILABLE = True
 except ImportError:
@@ -51,7 +52,7 @@ except ImportError:
 # الإعدادات
 # ---------------------------------------------------------------------------
 APP_NAME = "Mic Mute for Voicemeeter & Windows"
-APP_VERSION = "6.2.2"
+APP_VERSION = "7.0.1"
 GITHUB_REPO = "Lightoo00/Mic-Mute-for-Voicemeeter-Windows"
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CONFIG_PATH = os.path.join(os.environ.get("APPDATA", "."), "MicHUD.json")
@@ -70,6 +71,12 @@ DEFAULTS = {
     "auto_start": False,
     "start_minimized": False,
     "hud_hotkeys": True,
+    "smart_mute": False,
+    "smart_apps": "discord, teams, zoom, skype, slack, webex",
+    "auto_unmute": False,
+    "voice_threshold": 0.03,
+    "profiles": {},
+    "active_profile": "Default",
     "mode": "voicemeeter",
     "strip": 0,
     "device_id": "",
@@ -267,27 +274,36 @@ class WindowsAudio:
         self.volume = None
         self.device_id = ""
         self.devices = []
+        self._device = None
         self._refresh_devices()
         self._refresh()
 
     def _refresh_devices(self):
-        """يجلب قائمة بكل المايكات المتاحة"""
+        """Every active capture endpoint (render devices are excluded)."""
+        self.devices = []
         if not PYCAW_AVAILABLE:
-            self.devices = []
             return
+        found = []
         try:
-            devices = AudioUtilities.GetAllDevices()
-            self.devices = []
-            for d in devices:
-                if hasattr(d, 'dataFlow') and str(d.dataFlow) == '1':
-                    self.devices.append({
-                        'id': d.id,
-                        'name': d.FriendlyName,
-                        'device': d
-                    })
-        except Exception as e:
-            print(f"Error getting devices: {e}")
-            self.devices = []
+            found = AudioUtilities.GetAllDevices(EDataFlow.eCapture.value,
+                                                DEVICE_STATE.ACTIVE.value)
+        except Exception:
+            try:
+                found = AudioUtilities.GetAllDevices()
+            except Exception as exc:
+                print("Audio device scan failed:", exc)
+                found = []
+        seen = set()
+        for d in found:
+            try:
+                name = getattr(d, "FriendlyName", None) or "Microphone"
+                if getattr(d, "id", None) in seen:
+                    continue
+                seen.add(getattr(d, "id", None))
+                self.devices.append({"id": getattr(d, "id", ""), "name": name,
+                                     "device": d})
+            except Exception:
+                continue
 
     def get_devices_list(self):
         """يرجع قائمة بأسماء المايكات"""
@@ -299,22 +315,47 @@ class WindowsAudio:
         self._refresh()
 
     def _refresh(self):
-        """يحدث اتصال المايك الحالي"""
+        """Re-acquire the selected microphone (or the default one)."""
         if not PYCAW_AVAILABLE:
             return
         try:
+            target = None
             if self.device_id:
-                for d in self.devices:
-                    if d['id'] == self.device_id:
-                        interface = d['device'].Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                        self.volume = interface.QueryInterface(IAudioEndpointVolume)
-                        return
-            mic = AudioUtilities.GetMicrophone()
-            if mic:
-                interface = mic.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                self.volume = interface.QueryInterface(IAudioEndpointVolume)
+                target = next((d for d in self.devices if d["id"] == self.device_id), None)
+            if target is None:
+                mic = AudioUtilities.GetMicrophone()
+                if mic is not None:
+                    target = {"id": getattr(mic, "id", ""), "device": mic}
+            if target is None:
+                self.volume = None
+                self._device = None
+                return
+            dev = target.get("device") or target.get("AudioDevice")
+            interface = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            self.volume = interface.QueryInterface(IAudioEndpointVolume)
+            self._device = dev
         except Exception:
             self.volume = None
+            self._device = None
+
+    def is_alive(self):
+        """True when the current microphone still answers (USB unplug detection)."""
+        if not PYCAW_AVAILABLE:
+            return False
+        try:
+            if self.volume is not None:
+                self.volume.GetMute()
+                return True
+        except Exception:
+            pass
+        self._refresh_devices()
+        self._refresh()
+        try:
+            if self.volume is not None:
+                self.volume.GetMute()
+                return True
+        except Exception:
+            return False
 
     def get_mute(self):
         if not PYCAW_AVAILABLE or not self.volume:
@@ -342,15 +383,71 @@ class WindowsAudio:
         if not PYCAW_AVAILABLE:
             return 0.0
         try:
-            mic = AudioUtilities.GetMicrophone()
-            if mic and hasattr(mic, 'AudioMeterInformation'):
-                return mic.AudioMeterInformation.MasterValue
+            dev = self._device
+            if dev is None:
+                mic = AudioUtilities.GetMicrophone()
+                dev = mic
+            if dev is not None and hasattr(dev, "AudioMeterInformation"):
+                return float(dev.AudioMeterInformation.MasterValue)
             return 0.0
         except Exception:
             return 0.0
 
     def close(self):
         self.volume = None
+        self._device = None
+
+
+# ---------------------------------------------------------------------------
+# Microphone usage (Smart Mute) - Windows capability access store
+# ---------------------------------------------------------------------------
+MIC_USAGE_KEY = (r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager"
+                 r"\ConsentStore\microphone")
+
+
+def microphone_users():
+    """Names of the processes that are capturing the microphone right now."""
+    users = []
+    try:
+        base = winreg.OpenKey(winreg.HKEY_CURRENT_USER, MIC_USAGE_KEY)
+    except OSError:
+        return users
+
+    def label_of(name):
+        text = name.replace("#", "\\").replace("/", "\\")
+        parts = [p for p in text.split("\\") if p]
+        return parts[-1].lower() if parts else name.lower()
+
+    def scan(key, depth=0):
+        index = 0
+        while True:
+            try:
+                name = winreg.EnumKey(key, index)
+            except OSError:
+                return
+            index += 1
+            try:
+                sub = winreg.OpenKey(key, name)
+            except OSError:
+                continue
+            try:
+                try:
+                    start = int(winreg.QueryValueEx(sub, "LastUsedTimeStart")[0])
+                    stop = int(winreg.QueryValueEx(sub, "LastUsedTimeStop")[0])
+                except OSError:
+                    start, stop = 0, 0
+                if start and stop == 0:
+                    users.append(label_of(name))
+                elif depth == 0 and name.lower() == "nonpackaged":
+                    scan(sub, depth + 1)
+            finally:
+                winreg.CloseKey(sub)
+
+    try:
+        scan(base)
+    finally:
+        winreg.CloseKey(base)
+    return users
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +743,13 @@ class MicHUD:
         self._tray_queue = queue.Queue()
         self._toast_win = None
         self._hud_hidden = False
+        self._smart_active = None
+        self._smart_streak = 0
+        self._mute_until = 0.0
+        self._voice_hits = 0
+        self._device_check_at = 0.0
+        self._device_alive = True
+        self._manual_until = 0.0
         self.settings_win = None
 
         self.colors = dict(DEFAULTS["colors"])
@@ -692,6 +796,16 @@ class MicHUD:
         self.menu.add_command(label="Bigger", command=lambda: self._step_size(1))
         self.menu.add_command(label="Smaller", command=lambda: self._step_size(-1))
         self.menu.add_command(label="Next shape", command=self._cycle_shape)
+        self.menu.add_separator()
+        timer_menu = tk.Menu(self.menu, tearoff=0)
+        for label, secs in (("30 seconds", 30), ("1 minute", 60), ("5 minutes", 300),
+                            ("15 minutes", 900)):
+            timer_menu.add_command(label=label,
+                                   command=lambda s=secs: self.start_mute_timer(s))
+        self.menu.add_cascade(label="Mute for...", menu=timer_menu)
+        self._profile_menu = tk.Menu(self.menu, tearoff=0)
+        self.menu.add_cascade(label="Profiles", menu=self._profile_menu)
+        self._refresh_profile_menu()
         self.menu.add_separator()
         self.menu.add_command(label="Hide HUD", command=self._hide_hud)
         self.menu.add_command(label="Exit", command=self.quit)
@@ -891,6 +1005,21 @@ class MicHUD:
         self._native_hook = user32.SetWindowsHookExW(13, self._native_hook_proc, module, 0)
 
     # ---- hotkey -------------------------------------------------------------
+    def _refresh_profile_menu(self):
+        menu = getattr(self, "_profile_menu", None)
+        if menu is None:
+            return
+        try:
+            menu.delete(0, "end")
+            names = sorted((self.cfg.get("profiles") or {}).keys())
+            if not names:
+                menu.add_command(label="(no profiles yet)", state="disabled")
+                return
+            for name in names:
+                menu.add_command(label=name, command=lambda n=name: self.apply_profile(n))
+        except Exception:
+            pass
+
     def _hotkey_pressed(self):
         """Runs once per physical press; auto-repeat is filtered by the hook."""
         if self.hotkey_mode == "hold":
@@ -937,6 +1066,8 @@ class MicHUD:
             self._toast("Microphone muted" if new_state else "Microphone live", new_state)
 
     def toggle(self):
+        # a manual press always wins; automation stays out of the way for 90 s
+        self._manual_until = time.time() + 90
         self.set_muted(not self.muted)
 
     # ---- HUD visibility -----------------------------------------------------
@@ -1019,6 +1150,18 @@ class MicHUD:
                 pystray.MenuItem("Hold to talk",
                                  lambda: self._tray_call(self._toggle_hold_mode),
                                  checked=lambda item: self.hotkey_mode == "hold"),
+                pystray.MenuItem("Mute for...", pystray.Menu(
+                    pystray.MenuItem("30 seconds",
+                                     lambda: self._tray_call(lambda: self.start_mute_timer(30))),
+                    pystray.MenuItem("1 minute",
+                                     lambda: self._tray_call(lambda: self.start_mute_timer(60))),
+                    pystray.MenuItem("5 minutes",
+                                     lambda: self._tray_call(lambda: self.start_mute_timer(300))),
+                    pystray.MenuItem("15 minutes",
+                                     lambda: self._tray_call(lambda: self.start_mute_timer(900))),
+                )),
+                pystray.MenuItem("Profiles", pystray.Menu(
+                    lambda: self._tray_profiles())),
                 pystray.MenuItem("Show HUD", lambda: self._tray_call(self._show_hud)),
                 pystray.MenuItem("Settings...", lambda: self._tray_call(self.open_settings)),
                 pystray.MenuItem("Check for updates",
@@ -1031,6 +1174,14 @@ class MicHUD:
         except Exception as exc:
             print("Tray unavailable:", exc)
             self.tray = None
+
+    def _tray_profiles(self):
+        """Built when the submenu is opened, so new profiles appear immediately."""
+        names = sorted((self.cfg.get("profiles") or {}).keys())
+        if not names:
+            return [pystray.MenuItem("(no profiles yet)", None, enabled=False)]
+        return [pystray.MenuItem(name, lambda item, n=name: self._tray_call(
+                    lambda: self.apply_profile(n))) for name in names]
 
     def _stop_tray(self):
         try:
@@ -1708,6 +1859,9 @@ class MicHUD:
         muted = self.muted
         state = accent if live else (RED if muted else GRAY)
         status = "LIVE" if live else ("MUTE" if muted else "WAIT")
+        if muted and self._mute_until:
+            left = max(0, int(self._mute_until - time.time() + 0.99))
+            status = "MUTE " + (f"{left // 60}:{left % 60:02d}" if left >= 60 else f"{left}s")
         meter = self.level if live else 0.0
         panel_bg = blend_color(bg, RED, 0.055) if muted else bg
         border = blend_color(panel_bg, state, 0.30 if live else 0.20)
@@ -1858,6 +2012,8 @@ class MicHUD:
             self.set_muted(True)
         self._frame += 1
         self.phase += 0.24
+        if self._frame % 30 == 0:
+            self._automation_tick()
         target = 0.0
         if self.connected and not self.muted:
             if self.mode == "voicemeeter":
@@ -1866,10 +2022,142 @@ class MicHUD:
                 raw = self.audio.get_level()
             db = 20 * math.log10(raw + 1e-6)
             target = max(0.0, min(1.0, (db + 60.0) / 60.0))
+        elif self.connected and self.muted and self.cfg.get("auto_unmute"):
+            # voice activation has to listen while the output is muted
+            try:
+                raw = (self.audio.get_level(self.cfg["strip"])
+                       if self.mode == "voicemeeter" else self.audio.get_level())
+                db = 20 * math.log10(raw + 1e-6)
+                probe = max(0.0, min(1.0, (db + 60.0) / 60.0))
+            except Exception:
+                probe = 0.0
+            threshold = float(self.cfg.get("voice_threshold", 0.03))
+            if self.hotkey_mode != "hold" and probe >= threshold:
+                self._voice_hits += 1
+                if self._voice_hits >= 6:      # ~200 ms of speech
+                    self._voice_hits = 0
+                    self.set_muted(False)
+            else:
+                self._voice_hits = 0
         smoothing = 0.42 if target > self.level else 0.20
         self.level += (target - self.level) * smoothing
         self.draw()
         self.root.after(33, self.animate)
+
+    # ---- automation: smart mute, timer, device watchdog -----------------------
+    def _automation_tick(self):
+        now = time.time()
+        # mute timer
+        if self._mute_until and now >= self._mute_until:
+            self._mute_until = 0.0
+            self.set_muted(False)
+        # smart mute (a manual toggle or a running timer takes priority)
+        if self.cfg.get("smart_mute") and not self._mute_until and now >= self._manual_until:
+            keywords = [k.strip().lower() for k in
+                        str(self.cfg.get("smart_apps", "")).split(",") if k.strip()]
+            active = None
+            try:
+                for user in microphone_users():
+                    if any(k in user for k in keywords):
+                        active = user
+                        break
+            except Exception:
+                active = None
+            if active == self._smart_active:
+                self._smart_streak = 0
+            else:
+                self._smart_streak += 1
+                if self._smart_streak >= 2:          # ~2 s of stability
+                    self._smart_active = active
+                    self._smart_streak = 0
+                    if active and self.muted:
+                        self.set_muted(False)
+                        self._toast("Call detected - mic live", False)
+                    elif not active and not self.muted:
+                        self.set_muted(True)
+                        self._toast("Smart mute - mic muted", True)
+        # windows device watchdog
+        if self.mode == "windows" and now - self._device_check_at > 3.0:
+            self._device_check_at = now
+            try:
+                alive = self.audio.is_alive()
+            except Exception:
+                alive = True
+            if self._device_alive and not alive:
+                self._device_alive = False
+                self._toast("Microphone disconnected", True)
+            elif not self._device_alive and alive:
+                self._device_alive = True
+                self._toast("Microphone reconnected", False)
+
+    def start_mute_timer(self, seconds):
+        seconds = max(5, int(seconds))
+        self.set_muted(True)
+        self._mute_until = time.time() + seconds
+        label = f"{seconds}s" if seconds < 90 else f"{round(seconds / 60)} min"
+        self._toast("Muted for " + label, True)
+
+    # ---- profiles ------------------------------------------------------------
+    PROFILE_KEYS = ("hud_shape", "hud_size", "wave_style", "colors", "hotkey",
+                    "hotkey_mode", "opacity", "theme")
+
+    def _profile_snapshot(self):
+        snap = {}
+        for key in self.PROFILE_KEYS:
+            value = self.cfg.get(key)
+            snap[key] = dict(value) if isinstance(value, dict) else value
+        return snap
+
+    def apply_profile(self, name):
+        profiles = self.cfg.get("profiles") or {}
+        profile = profiles.get(name)
+        if not profile:
+            return False
+        for key, value in profile.items():
+            if key == "colors" and isinstance(value, dict):
+                self.colors = dict(DEFAULTS["colors"])
+                self.colors.update(value)
+                self.cfg["colors"] = dict(self.colors)
+            elif key in self.PROFILE_KEYS:
+                self.cfg[key] = value
+        self.cfg["active_profile"] = name
+        self.hud_shape = max(0, min(len(HUD_SHAPES) - 1, int(self.cfg.get("hud_shape", 0))))
+        self.hud_size = self.cfg.get("hud_size", "medium")
+        if self.hud_size not in SIZE_FACTORS:
+            self.hud_size = "medium"
+        self.scale = SIZE_FACTORS[self.hud_size]
+        self.hotkey_mode = "hold" if str(self.cfg.get("hotkey_mode", "toggle")) == "hold" else "toggle"
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        self._set_dimensions()
+        self.canvas.configure(width=self.W, height=self.H)
+        self.surface = ImgPainter(self.canvas, self.W, self.H, ss=SS_FACTOR)
+        self.root.geometry(f"{self.W}x{self.H}+{x}+{y}")
+        self.root.attributes("-alpha", float(self.cfg.get("opacity", 0.95)))
+        self.register_hotkey()
+        save_config(self.cfg)
+        self.draw()
+        self._toast("Profile: " + name, self.muted)
+        return True
+
+    def save_profile(self, name):
+        name = (name or "").strip()
+        if not name:
+            return False
+        profiles = dict(self.cfg.get("profiles") or {})
+        profiles[name] = self._profile_snapshot()
+        self.cfg["profiles"] = profiles
+        self.cfg["active_profile"] = name
+        save_config(self.cfg)
+        return True
+
+    def delete_profile(self, name):
+        profiles = dict(self.cfg.get("profiles") or {})
+        if name in profiles:
+            del profiles[name]
+            self.cfg["profiles"] = profiles
+            save_config(self.cfg)
+            return True
+        return False
 
     def open_settings(self):
         if self.settings_win and self.settings_win.winfo_exists():
@@ -2277,6 +2565,66 @@ class MicHUD:
                             style="S.TCheckbutton").grid(row=r, column=0, columnspan=2,
                                                           sticky="w", pady=(2, 2))
 
+        section("06 · AUTOMATION")
+        smart_var = tk.BooleanVar(value=self.cfg.get("smart_mute", False))
+        r = nxt()
+        ttk.Checkbutton(left, text="Smart mute: muted unless a call app uses the mic",
+                        variable=smart_var, style="S.TCheckbutton").grid(
+            row=r, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        apps_var = tk.StringVar(value=self.cfg.get("smart_apps", ""))
+        field_row("Call apps", ttk.Entry(left, textvariable=apps_var, width=24,
+                                         style="S.TEntry"))
+        voice_var = tk.BooleanVar(value=self.cfg.get("auto_unmute", False))
+        r = nxt()
+        ttk.Checkbutton(left, text="Auto-unmute when you start talking",
+                        variable=voice_var, style="S.TCheckbutton").grid(
+            row=r, column=0, columnspan=2, sticky="w", pady=(2, 2))
+        thr_var = tk.DoubleVar(value=float(self.cfg.get("voice_threshold", 0.03)))
+        field_row("Voice threshold", ttk.Spinbox(left, from_=0.01, to=0.5, increment=0.01,
+                                                 textvariable=thr_var, width=6,
+                                                 style="S.TSpinbox"))
+
+        section("07 · PROFILES")
+        prof_names = sorted((self.cfg.get("profiles") or {}).keys())
+        prof_var = tk.StringVar(value=self.cfg.get("active_profile", "")
+                                or (prof_names[0] if prof_names else ""))
+        prof_box = ttk.Combobox(left, textvariable=prof_var, values=prof_names or [""],
+                                state="readonly", style="S.TCombobox", width=20)
+        field_row("Profile", prof_box)
+        btn_row = tk.Frame(left, bg=BG)
+        r = nxt()
+        btn_row.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(6, 2))
+
+        def save_profile_click():
+            name = simpledialog.askstring("Save profile", "Profile name:", parent=w,
+                                          initialvalue=prof_var.get() or "Gaming")
+            if name and self.save_profile(name):
+                prof_box.configure(values=sorted((self.cfg.get("profiles") or {}).keys()))
+                prof_var.set(name)
+                self._refresh_profile_menu()
+
+        def delete_profile_click():
+            if prof_var.get() and self.delete_profile(prof_var.get()):
+                names = sorted((self.cfg.get("profiles") or {}).keys())
+                prof_box.configure(values=names or [""])
+                prof_var.set(names[0] if names else "")
+                self._refresh_profile_menu()
+
+        def apply_profile_click():
+            if prof_var.get():
+                self.apply_profile(prof_var.get())
+
+        for text, cmd, primary in (("Apply", apply_profile_click, True),
+                                   ("Save current as...", save_profile_click, False),
+                                   ("Delete", delete_profile_click, False)):
+            tk.Button(btn_row, text=text, command=cmd, relief="flat", bd=0,
+                      bg=ACCENT if primary else FIELD, fg="#0b1219" if primary else TXT,
+                      activebackground=ACCENT if primary else LINE,
+                      activeforeground="#0b1219" if primary else TXT,
+                      cursor="hand2", padx=12, pady=6,
+                      font=("Segoe UI Semibold", 8), highlightthickness=0).pack(
+                side="left", padx=(0, 6))
+
         # ---------------- footer ----------------
         r = nxt()
         tk.Frame(left, bg=LINE, height=1).grid(row=r, column=0, columnspan=2,
@@ -2300,6 +2648,13 @@ class MicHUD:
             self.cfg["toast"] = bool(toast_var.get())
             self.cfg["start_minimized"] = bool(mini_var.get())
             self.cfg["hud_hotkeys"] = bool(keys_var.get())
+            self.cfg["smart_mute"] = bool(smart_var.get())
+            self.cfg["smart_apps"] = apps_var.get().strip()
+            self.cfg["auto_unmute"] = bool(voice_var.get())
+            try:
+                self.cfg["voice_threshold"] = max(0.005, min(0.6, float(thr_var.get())))
+            except (tk.TclError, ValueError):
+                pass
             want_auto = bool(auto_var.get())
             if want_auto != self._autostart_enabled():
                 self._set_autostart(want_auto)
