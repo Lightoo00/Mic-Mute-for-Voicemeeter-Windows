@@ -51,10 +51,10 @@ mkdir release 2>nul
 copy /Y "dist\Mic Mute for Voicemeeter & Windows.exe" "release\Mic Mute for Voicemeeter & Windows.exe"
 copy /Y "dist\MicMuteUpdater.exe" "release\MicMuteUpdater.exe"
 copy /Y "dist\MicMuteUpdater.exe" "dist-fast\Mic Mute for Voicemeeter & Windows\MicMuteUpdater.exe"
-powershell -NoProfile -Command "Compress-Archive -Path 'release\*' -DestinationPath 'Mic-Mute-Windows-v7.0.2.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'release\*' -DestinationPath 'Mic-Mute-Windows-v7.0.3.zip' -Force"
 powershell -NoProfile -Command "Compress-Archive -Path 'dist-fast\Mic Mute for Voicemeeter & Windows\*' -DestinationPath 'Mic-Mute-Fast-v6.2.2.zip' -Force"
 echo.
 echo Build complete:
-echo   Mic-Mute-Windows-v7.0.2.zip   (auto-update package)
+echo   Mic-Mute-Windows-v7.0.3.zip   (auto-update package)
 echo   Mic-Mute-Fast-v6.2.2.zip      (fast-start folder build)
 pause

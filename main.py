@@ -52,7 +52,7 @@ except ImportError:
 # الإعدادات
 # ---------------------------------------------------------------------------
 APP_NAME = "Mic Mute for Voicemeeter & Windows"
-APP_VERSION = "7.0.2"
+APP_VERSION = "7.0.3"
 GITHUB_REPO = "Lightoo00/Mic-Mute-for-Voicemeeter-Windows"
 RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 CONFIG_PATH = os.path.join(os.environ.get("APPDATA", "."), "MicHUD.json")
@@ -1120,9 +1120,25 @@ class MicHUD:
         remote = (remote + (0, 0, 0))[:3]
         if remote <= current:
             return None, release, None
-        asset = next((a for a in release.get("assets", [])
-                      if a.get("name", "").lower().endswith(".zip")), None)
+        asset = self._pick_asset(release)
         return latest, release, asset
+
+    def _folder_build(self):
+        """True when the app runs from a onedir package (EXE next to _internal)."""
+        try:
+            return os.path.isdir(os.path.join(os.path.dirname(sys.executable), "_internal"))
+        except Exception:
+            return False
+
+    def _pick_asset(self, release):
+        """Pick the ZIP that matches this install, never the other build flavour."""
+        assets = [a for a in release.get("assets", [])
+                  if str(a.get("name", "")).lower().endswith(".zip")]
+        if not assets:
+            return None
+        folder = self._folder_build()
+        match = [a for a in assets if ("fast" in a["name"].lower()) == folder]
+        return match[0] if match else assets[0]
 
     def check_for_updates(self, silent=False):
         """Look for a newer release without blocking the HUD, then offer to install."""
@@ -1504,6 +1520,7 @@ class MicHUD:
         add("time          : " + time.strftime("%Y-%m-%d %H:%M:%S"))
         add("version       : " + APP_VERSION)
         add("frozen        : " + str(bool(getattr(sys, "frozen", False))))
+        add("build         : " + ("folder (fast)" if self._folder_build() else "single file"))
         add("python        : " + sys.version.split()[0])
         add("tk            : " + str(tk.TkVersion))
         add("config        : " + CONFIG_PATH)
